@@ -1,0 +1,28 @@
+{
+  "name": "detritus-rest",
+  "version": "0.0.1",
+  "description": "some js rest library",
+  "main": "lib/index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/detritusjs/rest.git"
+  },
+  "keywords": [
+    "rest",
+    "library"
+  ],
+  "author": "cakedan",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/detritusjs/rest/issues"
+  },
+  "homepage": "https://github.com/detritusjs/rest#readme"
+}
