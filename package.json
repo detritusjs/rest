@@ -1,28 +1,56 @@
 {
-  "name": "detritus-rest",
-  "version": "0.0.2",
+  "_from": "detritus-rest",
+  "_id": "detritus-rest@0.0.3",
+  "_inBundle": false,
+  "_integrity": "sha512-2RA4NieQbDN4TyC84cGXDH2jaNO66pIz0lNWdwwaQhUVYs13PXL77Icqsif8kxCd/y2c/YUEkiOCPHyyyj4BsA==",
+  "_location": "/detritus-rest",
+  "_phantomChildren": {},
+  "_requested": {
+    "type": "tag",
+    "registry": true,
+    "raw": "detritus-rest",
+    "name": "detritus-rest",
+    "escapedName": "detritus-rest",
+    "rawSpec": "",
+    "saveSpec": null,
+    "fetchSpec": "latest"
+  },
+  "_requiredBy": [
+    "#USER",
+    "/"
+  ],
+  "_resolved": "https://registry.npmjs.org/detritus-rest/-/detritus-rest-0.0.3.tgz",
+  "_shasum": "928c1a3f5d0f456e1c83304f9d0b686465f63267",
+  "_spec": "detritus-rest",
+  "_where": "/root/bot",
+  "author": {
+    "name": "cakedan"
+  },
+  "bugs": {
+    "url": "https://github.com/detritusjs/rest/issues"
+  },
+  "bundleDependencies": false,
+  "dependencies": {},
+  "deprecated": false,
   "description": "some js rest library",
-  "main": "lib/index.js",
+  "devDependencies": {},
   "directories": {
     "lib": "lib"
   },
-  "dependencies": {},
-  "devDependencies": {},
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/detritusjs/rest.git"
-  },
+  "homepage": "https://github.com/detritusjs/rest#readme",
   "keywords": [
     "rest",
     "library"
   ],
-  "author": "cakedan",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/detritusjs/rest/issues"
+  "main": "lib/index.js",
+  "name": "detritus-rest",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/detritusjs/rest.git"
   },
-  "homepage": "https://github.com/detritusjs/rest#readme"
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "version": "0.0.4"
 }
