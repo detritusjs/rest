@@ -1,6 +1,6 @@
 {
   "name": "detritus-rest",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "description": "some js rest library",
   "main": "lib/index.js",
   "directories": {
@@ -8,6 +8,9 @@
   },
   "dependencies": {},
   "devDependencies": {},
+  "peerDependencies": {
+    "iltorb": "^2.3.0"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
