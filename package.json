@@ -1,6 +1,6 @@
 {
   "name": "detritus-rest",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "some js rest library",
   "main": "lib/index.js",
   "directories": {
