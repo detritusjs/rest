@@ -13,7 +13,7 @@ export class Route {
     path: string = '',
     params: RouteParameters = {},
   ) {
-    this.method = method;
+    this.method = method.toUpperCase();
     this.path = path;
     this.params = params;
 
