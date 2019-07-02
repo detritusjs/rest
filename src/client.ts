@@ -29,7 +29,7 @@ interface RequestRoute {
   urlPath?: null,
 }
 
-interface BeforeRequestOptions extends BasicRequestOptions {
+export interface BeforeRequestOptions extends BasicRequestOptions {
   method?: string,
   path?: string,
   query?: {
@@ -162,6 +162,7 @@ export class Client {
       jsonify: options.jsonify,
       method,
       multipart: options.multipart,
+      route: options.route,
       settings: Object.assign({}, this.settings, options.settings),
       url,
     });
