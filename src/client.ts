@@ -33,7 +33,7 @@ export interface BeforeRequestOptions extends BasicRequestOptions {
   method?: string,
   path?: string,
   query?: {
-    [key: string]: string,
+    [key: string]: string | undefined,
   },
   route?: Route | RequestRoute,
   settings?: RequestSettings,
@@ -133,7 +133,9 @@ export class Client {
 
     if (options.query) {
       for (let key in options.query) {
-        url.searchParams.set(key, options.query[key]);
+        if (options.query[key] !== undefined) {
+          url.searchParams.set(key, <string> options.query[key]);
+        }
       }
     }
 
@@ -142,7 +144,9 @@ export class Client {
       // treat body as query
       if (typeof(body) === 'object') {
         for (let key in body) {
-          url.searchParams.set(key, body[key]);
+          if (body[key] !== undefined) {
+            url.searchParams.set(key, <string> body[key]);
+          }
         }
       }
       body = null;
