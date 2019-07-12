@@ -133,13 +133,7 @@ export class Client {
 
     if (options.query) {
       for (let key in options.query) {
-        let value = options.query[key];
-        if (value !== undefined) {
-          if (typeof(value) !== 'string') {
-            value = String(value);
-          }
-          url.searchParams.set(key, value);
-        }
+        appendQuery(url, key, options.query[key]);
       }
     }
 
@@ -148,13 +142,7 @@ export class Client {
       // treat body as query
       if (typeof(body) === 'object') {
         for (let key in body) {
-          let value = body[key];
-          if (value !== undefined) {
-            if (typeof(value) !== 'string') {
-              value = String(value);
-            }
-            url.searchParams.set(key, value);
-          }
+          appendQuery(url, key, body[key]);
         }
       }
       body = null;
@@ -188,5 +176,25 @@ export class Client {
     }
     const request = await this.createRequest(options);
     return await request.send();
+  }
+}
+
+export function appendQuery(
+  url: URL,
+  key: string,
+  value: any,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let v of value) {
+      appendQuery(url, key, v);
+    }
+  } else {
+    if (typeof(value) !== 'string') {
+      value = String(value);
+    }
+    url.searchParams.append(key, value);
   }
 }
