@@ -20,7 +20,7 @@ export class Response {
   alpn: string;
   connection: any;
   contentType: string;
-  data: any;
+  data: Buffer | null | undefined;
   headers: HTTPHeadersInterface;
   request: Request;
   statusCode: number;
@@ -119,6 +119,8 @@ export class Response {
           } else {
             this.data = Buffer.concat(body);
           }
+        } else {
+          this.data = null;
         }
 
         resolve(this.data);
@@ -128,30 +130,37 @@ export class Response {
 
   async body(): Promise<any> {
     const buffer = await this.buffer();
-    switch (this.contentType) {
-      case SupportedContentTypes.APPLICATION_JSON: {
-        return JSON.parse(String(buffer));
-      };
-      case SupportedContentTypes.TEXT_PLAIN: {
-        return String(buffer);
-      };
-      default: {
-        if (this.contentType.startsWith('text/')) {
+    if (buffer instanceof Buffer) {
+      switch (this.contentType) {
+        case SupportedContentTypes.APPLICATION_JSON: {
+          return JSON.parse(String(buffer));
+        };
+        case SupportedContentTypes.TEXT_PLAIN: {
           return String(buffer);
-        }
-      };
+        };
+        default: {
+          if (this.contentType.startsWith('text/')) {
+            return String(buffer);
+          }
+        };
+      }
     }
     return buffer;
   }
 
   async json(): Promise<any> {
     const buffer = await this.buffer();
-    return JSON.parse(String(buffer));
+    if (buffer instanceof Buffer) {
+      return JSON.parse(String(buffer));
+    }
   }
 
   async text(): Promise<string> {
     const buffer = await this.buffer();
-    return String(buffer);
+    if (buffer instanceof Buffer) {
+      return String(buffer);
+    }
+    return '';
   }
 
   toString() {

@@ -30,6 +30,7 @@ interface RequestRoute {
 }
 
 export interface BeforeRequestOptions extends BasicRequestOptions {
+  headers?: {[key: string]: string | undefined},
   method?: string,
   path?: string,
   query?: {
@@ -57,7 +58,7 @@ export class Client {
 
   constructor(options?: {
     baseUrl?: string | URL,
-    headers?: HTTPHeadersInterface,
+    headers?: {[key: string]: string | undefined},
     settings?: ClientSettings,
   }) {
     options = Object.assign({}, defaultClientOptions, options);
@@ -74,7 +75,9 @@ export class Client {
     this.headers = Object.assign({}, defaultClientOptions.headers);
     if (options.headers) {
       for (let key in options.headers) {
-        this.headers[key.toLowerCase()] = options.headers[key];
+        if (options.headers[key] !== undefined) {
+          this.headers[key.toLowerCase()] = <string> options.headers[key];
+        }
       }
     }
 
@@ -151,7 +154,9 @@ export class Client {
     const headers = Object.assign({}, this.headers);
     if (options.headers) {
       for (let key in options.headers) {
-        headers[key.toLowerCase()] = options.headers[key];
+        if (options.headers[key] !== undefined) {
+          headers[key.toLowerCase()] = <string> options.headers[key];
+        }
       }
     }
 

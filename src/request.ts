@@ -33,7 +33,6 @@ interface RequestFile {
 export interface BasicRequestOptions {
   body?: any,
   files?: Array<RequestFile>,
-  headers?: HTTPHeadersInterface,
   jsonify?: boolean,
   multipart?: boolean,
 }
@@ -44,6 +43,7 @@ export interface RequestSettings {
 }
 
 interface RequestOptions extends BasicRequestOptions {
+  headers?: HTTPHeadersInterface,
   method: string,
   route?: Route,
   settings: RequestSettings,
