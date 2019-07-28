@@ -249,17 +249,21 @@ export class Request {
         case ALPNProtocols.NONE:
         case ALPNProtocols.HTTP1:
         case ALPNProtocols.HTTP1_1: {
-          let error: RequestError | Error;
-          request.once('error', (e: any) => {
-            error = e;
-            request.abort();
-          }).once('abort', () => {
+          let error: Error;
+          request.once('abort', () => {
+            let requestError: RequestError;
             if (error) {
-              error = new RequestError(error, this);
+              requestError = new RequestError(error, this);
             } else {
-              error = new RequestError(`Request aborted by the client.`, this);
+              requestError = new RequestError('Request aborted by the client.', this);
             }
-            reject(error);
+            reject(requestError);
+          }).on('error', (e: any) => {
+            if (request.aborted) {
+              // we already handled the error from abort
+              return;
+            }
+            reject(new RequestError(e, this));
           });
 
           const now = Date.now();
@@ -272,7 +276,7 @@ export class Request {
         }; break;
         case ALPNProtocols.HTTP2: {
           let error: RequestError | Error;
-          request.once('error', (e: any) => {
+          request.on('error', (e: any) => {
             error = e;
           }).once('close', () => {
             if (!error) {return;}
