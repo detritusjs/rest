@@ -17,10 +17,14 @@ const Encoders: {
   Zlib,
 };
 
-try {
-  Encoders.Brotli = require('iltorb');
+if (Zlib.createBrotliCompress) {
   AcceptedEncodings.push(Encodings.BR);
-} catch(e) {}
+} else {
+  try {
+    Encoders.Brotli = require('iltorb');
+    AcceptedEncodings.push(Encodings.BR);
+  } catch(e) {}
+}
 
 
 export {
@@ -35,7 +39,13 @@ export function decode(stream: any, format: string) {
   }
 
   switch (format) {
-    case Encodings.BR: stream = stream.pipe(Encoders.Brotli.decompressStream()); break;
+    case Encodings.BR: {
+      if (Zlib.createBrotliCompress) {
+        stream = stream.pipe(Encoders.Zlib.createBrotliDecompress());
+      } else {
+        stream = stream.pipe(Encoders.Brotli.decompressStream());
+      }
+    }; break;
     case Encodings.DEFLATE: stream = stream.pipe(Encoders.Zlib.createInflate()); break;
     case Encodings.GZIP: stream = stream.pipe(Encoders.Zlib.createGunzip()); break;
   }
