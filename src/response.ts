@@ -17,15 +17,15 @@ const EmptyBodyCodes: Array<HTTPStatusCodes> = [
 
 
 export class Response {
-  alpn: string;
-  connection: any;
-  contentType: string;
-  data: Buffer | null | undefined;
-  headers: HTTPHeadersInterface;
-  request: Request;
-  statusCode: number;
-  stream: any;
-  took: number;
+  readonly alpn: string;
+  readonly connection: any;
+  readonly contentType: string;
+  readonly data: Buffer | null | undefined;
+  readonly headers: HTTPHeadersInterface;
+  readonly request: Request;
+  readonly statusCode: number;
+  readonly stream: any;
+  readonly took: number;
 
   constructor(
     request: Request,
@@ -63,6 +63,7 @@ export class Response {
 
     Object.defineProperties(this, {
       connection: {enumerable: false, writable: false},
+      data: {enumerable: false},
       stream: {enumerable: false, writable: false},
     });
 
