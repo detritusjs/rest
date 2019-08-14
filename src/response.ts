@@ -20,12 +20,13 @@ export class Response {
   readonly alpn: string;
   readonly connection: any;
   readonly contentType: string;
-  readonly data: Buffer | null | undefined;
   readonly headers: HTTPHeadersInterface;
   readonly request: Request;
   readonly statusCode: number;
   readonly stream: any;
   readonly took: number;
+
+  data: Buffer | null | undefined;
 
   constructor(
     request: Request,
