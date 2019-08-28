@@ -16,11 +16,7 @@ import {
 import { Route } from './route';
 
 
-interface ClientSettings {
-  timeout?: number,
-}
-
-interface RequestRoute {
+export interface RequestRoute {
   method?: string,
   params?: {
     [key: string]: string,
@@ -42,25 +38,31 @@ export interface BeforeRequestOptions extends BasicRequestOptions {
 }
 
 
-const defaultClientOptions = {
+const defaultClientOptions = Object.freeze({
   settings: {
     timeout: 20000,
   },
   headers: {
     [HTTPHeaders.USER_AGENT]: `detritus-rest (${Package.URL}, ${Package.VERSION})`,
   },
-};
+});
+
+export interface ClientSettings {
+  timeout?: number,
+}
+
+export interface ClientOptions {
+  baseUrl?: string | URL,
+  headers?: {[key: string]: string | undefined},
+  settings?: ClientSettings,
+}
 
 export class Client {
   baseUrl: string | URL;
   headers: HTTPHeadersInterface;
   settings: ClientSettings;
 
-  constructor(options?: {
-    baseUrl?: string | URL,
-    headers?: {[key: string]: string | undefined},
-    settings?: ClientSettings,
-  }) {
+  constructor(options?: ClientOptions) {
     options = Object.assign({}, defaultClientOptions, options);
 
     this.baseUrl = '';

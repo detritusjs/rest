@@ -23,7 +23,7 @@ import { Response } from './response';
 import { Route } from './route';
 
 
-interface RequestFile {
+export interface RequestFile {
   contentType?: string,
   data: any,
   filename?: string,
@@ -42,7 +42,7 @@ export interface RequestSettings {
   timeout?: number,
 }
 
-interface RequestOptions extends BasicRequestOptions {
+export interface RequestOptions extends BasicRequestOptions {
   headers?: HTTPHeadersInterface,
   method: string,
   route?: Route,

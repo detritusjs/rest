@@ -12,7 +12,7 @@ import { Request } from './request';
 
 const EmptyBodyCodes: Array<HTTPStatusCodes> = [
   HTTPStatusCodes.NO_CONTENT,
-  HTTPStatusCodes.NOT_MODIFIED
+  HTTPStatusCodes.NOT_MODIFIED,
 ];
 
 
