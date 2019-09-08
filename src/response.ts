@@ -27,6 +27,7 @@ export class Response {
   readonly took: number;
 
   data: Buffer | null | undefined;
+  ended: boolean = false;
 
   constructor(
     request: Request,
@@ -71,30 +72,46 @@ export class Response {
     this.contentType = (this.headers[HTTPHeaders.CONTENT_TYPE] || '').split(';').shift() || '';
   }
 
+  get closed(): boolean {
+    switch (this.alpn) {
+      case ALPNProtocols.NONE:
+      case ALPNProtocols.HTTP1:
+      case ALPNProtocols.HTTP1_1: {
+        return this.ended;
+      };
+      case ALPNProtocols.HTTP2: {
+        return this.stream.closed;
+      };
+    }
+    return true;
+  }
+
   get ok(): boolean {
     return HTTPStatusCodes.OK <= this.statusCode && this.statusCode < HTTPStatusCodes.MULTIPLE_CHOICES;
   }
 
   close(): void {
     // if you dont get/want data, use this if http2 is used
-    if (this.alpn === ALPNProtocols.HTTP2) {
-      if (!this.stream.closed) {
-        this.stream.close();
-      }
-      if (!this.connection.closed) {
-        this.connection.close();
-      }
+    switch (this.alpn) {
+      case ALPNProtocols.HTTP2: {
+        if (!this.stream.closed) {
+          this.stream.close();
+        }
+        if (!this.connection.closed) {
+          this.connection.close();
+        }
+      }; break;
     }
+    this.ended = true;
   }
 
   buffer(): Promise<Buffer | null> {
     return new Promise((resolve, reject) => {
-      if (this.stream.closed) {
-        if (this.data !== undefined) {
-          return resolve(this.data);
-        } else {
+      if (this.closed) {
+        if (this.data === undefined) {
           return reject(new ResponseError(`Cannot get the body of a closed response.`, this));
         }
+        return resolve(this.data);
       }
       this.stream.once('aborted', () => {
         reject(new ResponseError(`Response was aborted by the server.`, this));
@@ -114,6 +131,15 @@ export class Response {
         body.push(data);
       }).once('end', () => {
         this.close();
+        switch (this.alpn) {
+          case ALPNProtocols.NONE:
+          case ALPNProtocols.HTTP1:
+          case ALPNProtocols.HTTP1_1: {
+            if (!this.stream.complete) {
+              return reject(new ResponseError(`Response connection was terminated while receiving message.`, this));
+            }
+          }; break;
+        }
 
         if (body.length) {
           if (body.length === 1) {
