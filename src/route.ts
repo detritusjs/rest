@@ -22,12 +22,15 @@ export class Route {
 }
 
 
+export const PathReplacementRegexp = /:(\w+):?/g;
 export function replacePathParameters(
   path: string,
   parameters: RouteParameters = {},
 ): string {
-  for (let key in parameters) {
-    path = path.replace(`:${key}:`, encodeURIComponent(parameters[key]));
-  }
-  return path;
+  return path.replace(PathReplacementRegexp, (match: string, key: string) => {
+    if (key in parameters) {
+      return encodeURIComponent(parameters[key]);
+    }
+    return match;
+  });
 }

@@ -9,7 +9,7 @@ const DetritusRest = require('../lib');
     const response = await client.request({
       route: {
         method: 'get',
-        path: '/httpbin/:someVariable:',
+        path: '/httpbin/:someVariable',
         params: {
           someVariable: 'get',
         },

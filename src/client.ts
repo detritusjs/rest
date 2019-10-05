@@ -184,6 +184,69 @@ export class Client {
     const request = await this.createRequest(options);
     return await request.send();
   }
+
+  async delete(options?: BeforeRequestOptions | string): Promise<any> {
+    if (typeof(options) === 'string') {
+      options = {method: HTTPMethods.DELETE, url: options};
+    } else {
+      options = Object.assign({}, options, {method: HTTPMethods.DELETE});
+    }
+    return this.request(options);
+  }
+
+  async get(options?: BeforeRequestOptions | string): Promise<any> {
+    if (typeof(options) === 'string') {
+      options = {method: HTTPMethods.GET, url: options};
+    } else {
+      options = Object.assign({}, options, {method: HTTPMethods.GET});
+    }
+    return this.request(options);
+  }
+
+  async head(options?: BeforeRequestOptions | string): Promise<any> {
+    if (typeof(options) === 'string') {
+      options = {method: HTTPMethods.HEAD, url: options};
+    } else {
+      options = Object.assign({}, options, {method: HTTPMethods.HEAD});
+    }
+    return this.request(options);
+  }
+
+  async options(options?: BeforeRequestOptions | string): Promise<any> {
+    if (typeof(options) === 'string') {
+      options = {method: HTTPMethods.OPTIONS, url: options};
+    } else {
+      options = Object.assign({}, options, {method: HTTPMethods.OPTIONS});
+    }
+    return this.request(options);
+  }
+
+  async patch(options?: BeforeRequestOptions | string): Promise<any> {
+    if (typeof(options) === 'string') {
+      options = {method: HTTPMethods.PATCH, url: options};
+    } else {
+      options = Object.assign({}, options, {method: HTTPMethods.PATCH});
+    }
+    return this.request(options);
+  }
+
+  async post(options?: BeforeRequestOptions | string): Promise<any> {
+    if (typeof(options) === 'string') {
+      options = {method: HTTPMethods.POST, url: options};
+    } else {
+      options = Object.assign({}, options, {method: HTTPMethods.POST});
+    }
+    return this.request(options);
+  }
+
+  async put(options?: BeforeRequestOptions | string): Promise<any> {
+    if (typeof(options) === 'string') {
+      options = {method: HTTPMethods.PUT, url: options};
+    } else {
+      options = Object.assign({}, options, {method: HTTPMethods.PUT});
+    }
+    return this.request(options);
+  }
 }
 
 export function appendQuery(
