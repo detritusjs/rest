@@ -191,6 +191,8 @@ export class Request {
               return reject(new RequestError(socket.authorizationError, this));
             }
 
+            // temporary fix for https://github.com/nodejs/node/pull/33209
+            socket.secureConnecting = false;
             switch (socket.alpnProtocol) {
               case false:
               case ALPNProtocols.HTTP1:
