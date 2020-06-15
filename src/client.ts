@@ -65,7 +65,7 @@ export class Client {
     if (typeof(info) === 'string' || info instanceof URL) {
       url = info;
     } else {
-      Object.assign(init, info);
+      init = Object.assign({}, info, init);
       if (init.url || (this.baseUrl && (init.path || (init.route && init.route.path)))) {
         url = init.url || this.baseUrl;
       } else {

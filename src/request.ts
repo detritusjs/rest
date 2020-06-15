@@ -50,7 +50,7 @@ export class Request extends FetchRequest {
     if (typeof(info) === 'string' || info instanceof URL) {
       url = new URL('', info);
     } else {
-      Object.assign(init, info);
+      init = Object.assign({}, info, init);
       if (init.url) {
         url = new URL('', init.url);
       } else {
