@@ -13,6 +13,7 @@ import {
   isFormData,
   isURLSearchParameters,
 } from './is';
+import { Response } from './response';
 import { Route } from './route';
 
 
@@ -155,8 +156,13 @@ export class Request extends FetchRequest {
     return new Request(this);
   }
 
-  send() {
-    return fetch(this.url, this);
+  async send() {
+    const response = await fetch(this.url, this);
+    return new Response(this, response);
+  }
+
+  toString(): string {
+    return `${this.method}-${URLFormat(this.url)}`;
   }
 }
 

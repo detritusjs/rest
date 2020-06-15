@@ -1,15 +1,15 @@
 import { Agent } from 'http';
 import { URL } from 'url';
 
-import fetch, { Headers, HeadersInit, Response } from 'node-fetch';
+import { Headers, HeadersInit } from 'node-fetch';
 
 import {
   HTTPHeaders,
   HTTPMethods,
   Package,
 } from './constants';
-
 import { Request, RequestOptions } from './request';
+import { Response } from './response';
 
 
 const defaultClientOptions = Object.freeze({
