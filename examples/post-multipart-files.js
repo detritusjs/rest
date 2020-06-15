@@ -8,15 +8,15 @@ const DetritusRest = require('../lib');
       files: [
         {
           contentType: 'text/plain',
-          data: 'file-data-aaaaaaaaaaaaaaaaaa',
+          key: 'some-field-name',
           filename: 'file-name.txt',
-          name: 'some-field-name',
+          value: 'file-data-aaaaaaaaaaaaaaa',
         },
       ],
       method: 'post',
       url: 'https://nghttp2.org/httpbin/post',
     });
-    const body = await response.body();
+    const body = await response.json();
     console.log(body);
   } catch(error) {
     console.error(error);

@@ -8,7 +8,7 @@ const DetritusRest = require('../lib');
       method: 'delete',
       url: 'https://nghttp2.org/httpbin/delete',
     });
-    const body = await response.body();
+    const body = await response.json();
     console.log(body);
   } catch(error) {
     console.error(error);

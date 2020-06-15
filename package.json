@@ -1,18 +1,19 @@
 {
   "name": "detritus-rest",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "some js rest library",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "files": [
     "lib/**/*"
   ],
-  "dependencies": {},
-  "devDependencies": {
-    "@types/node": "^13.13.4"
+  "dependencies": {
+    "form-data": "^3.0.0",
+    "node-fetch": "^2.6.0"
   },
-  "peerDependencies": {
-    "iltorb": "^2.3.0"
+  "devDependencies": {
+    "@types/node": "^13.13.12",
+    "@types/node-fetch": "^2.5.7"
   },
   "scripts": {
     "build": "tsc",
