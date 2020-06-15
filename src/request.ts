@@ -1,7 +1,16 @@
-import { format as URLFormat, URL, URLSearchParams } from 'url';
+import { Agent } from 'http';
+import { format as URLFormat, URL } from 'url';
 
 import * as FormData from 'form-data';
-import fetch, { BodyInit, Headers, Request as FetchRequest, RequestInit } from 'node-fetch';
+import fetch, {
+  BodyInit,
+  Headers,
+  HeadersInit,
+  Request as FetchRequest,
+  RequestInit,
+  RequestRedirect,
+} from 'node-fetch';
+import { AbortSignal } from 'node-fetch/externals';
 
 import {
   HTTPHeaders,
@@ -22,18 +31,27 @@ export interface RequestFile extends FormData.AppendOptions {
   value: any,
 }
 
-export interface RequestOptions extends RequestInit {
+export interface RequestOptions {
+  agent?: Agent | ((parsedUrl: URL) => Agent),
   body?: BodyInit | null | any,
+  compress?: boolean,
   files?: Array<RequestFile>,
+  follow?: number,
+  headers?: HeadersInit | Record<string, string | undefined>,
   jsonify?: boolean,
+  method?: string,
   multipart?: boolean,
   path?: string,
   query?: Record<string, any>,
+  redirect?: RequestRedirect,
   route?: Route | {
     method?: string,
     params?: Record<string, any>,
     path?: string,
   } | null,
+  signal?: AbortSignal | null,
+  size?: number,
+  timeout?: number,
   url?: string | URL,
 }
 
@@ -93,11 +111,7 @@ export class Request extends FetchRequest {
       }
     }
 
-    if (init.headers) {
-      init.headers = new Headers(init.headers);
-    } else {
-      init.headers = new Headers();
-    }
+    init.headers = createHeaders(init.headers);
 
     let body: any;
     if (isFormData(init.body)) {
@@ -148,8 +162,16 @@ export class Request extends FetchRequest {
     }
     init.body = body;
 
-    super(url, init);
+    super(url, init as RequestInit);
     this.route = route;
+  }
+
+  get parsedUrl(): URL {
+    const url = (this.url as any);
+    if (url instanceof URL) {
+      return url;
+    }
+    return new URL(url);
   }
 
   clone() {
@@ -185,4 +207,24 @@ export function appendQuery(
     }
     url.searchParams.append(key, value);
   }
+}
+
+
+export function createHeaders(
+  old?: HeadersInit | Record<string, string | undefined>,
+): Headers {
+  if (old instanceof Headers || typeof((old as any)[Symbol.iterator]) === 'function') {
+    return new Headers(old as HeadersInit);
+  } else if (old) {
+    // go through and pick out the undefined
+    const headers = new Headers();
+    for (let key in old) {
+      const value = (old as any)[key];
+      if (value !== undefined) {
+        headers.append(key, value);
+      }
+    }
+    return headers;
+  }
+  return new Headers();
 }

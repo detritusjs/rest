@@ -8,7 +8,7 @@ import {
   HTTPMethods,
   Package,
 } from './constants';
-import { Request, RequestOptions } from './request';
+import { createHeaders, Request, RequestOptions } from './request';
 import { Response } from './response';
 
 
@@ -21,7 +21,7 @@ const defaultClientOptions = Object.freeze({
 export interface ClientOptions {
   agent?: Agent | ((parsedUrl: URL) => Agent),
   baseUrl?: string | URL,
-  headers?: HeadersInit,
+  headers?: HeadersInit | Record<string, string | undefined>,
 }
 
 export class Client {
@@ -43,7 +43,7 @@ export class Client {
       }
     }
 
-    this.headers = new Headers(options.headers);
+    this.headers = createHeaders(options.headers);
     for (let key in defaultClientOptions.headers) {
       if (!this.headers.has(key)) {
         const value = (defaultClientOptions.headers as any)[key];
@@ -78,7 +78,7 @@ export class Client {
     }
 
     if (init.headers) {
-      init.headers = new Headers(init.headers);
+      init.headers = createHeaders(init.headers);
       for (let [key, value] of this.headers) {
         if (!init.headers.has(key)) {
           init.headers.set(key, value);
