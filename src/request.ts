@@ -179,8 +179,9 @@ export class Request extends FetchRequest {
   }
 
   async send() {
+    const now = Date.now();
     const response = await fetch(this.url, this);
-    return new Response(this, response);
+    return new Response(this, response, Date.now() - now);
   }
 
   toString(): string {
@@ -213,7 +214,7 @@ export function appendQuery(
 export function createHeaders(
   old?: HeadersInit | Record<string, string | undefined>,
 ): Headers {
-  if (old instanceof Headers || typeof((old as any)[Symbol.iterator]) === 'function') {
+  if (old instanceof Headers || (old && typeof((old as any)[Symbol.iterator]) === 'function')) {
     return new Headers(old as HeadersInit);
   } else if (old) {
     // go through and pick out the undefined

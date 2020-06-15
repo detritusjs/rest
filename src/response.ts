@@ -7,12 +7,14 @@ import { Request } from './request';
 export class Response {
   readonly fetchResponse: FetchResponse;
   readonly request: Request;
+  readonly took: number;
 
   _body: Buffer | null = null;
 
-  constructor(request: Request, response: FetchResponse) {
+  constructor(request: Request, response: FetchResponse, took: number = 0) {
     this.fetchResponse = response;
     this.request = request;
+    this.took = took;
 
     Object.defineProperties(this, {
       _body: {enumerable: false},
