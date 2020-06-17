@@ -152,7 +152,7 @@ export class Request extends FetchRequest {
           }
         }
       }
-    } else {
+    } else if (init.body !== undefined) {
       if (init.jsonify) {
         init.headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
         body = JSON.stringify(init.body);
