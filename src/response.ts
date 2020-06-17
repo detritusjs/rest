@@ -9,7 +9,7 @@ export class Response {
   readonly request: Request;
   readonly took: number;
 
-  _body: Buffer | null = null;
+  _body: Promise<Buffer> | Buffer | null = null;
 
   constructor(request: Request, response: FetchResponse, took: number = 0) {
     this.fetchResponse = response;
@@ -77,7 +77,8 @@ export class Response {
     if (this._body) {
       return this._body;
     }
-    return this._body = await this.fetchResponse.buffer();
+    this._body = this.fetchResponse.buffer();
+    return this._body = await this._body;
   }
 
   async json(): Promise<unknown> {
