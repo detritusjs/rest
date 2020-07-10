@@ -82,7 +82,11 @@ export class Response {
   }
 
   async json(): Promise<unknown> {
-    return JSON.parse(await this.text());
+    const text = await this.text();
+    if (text) {
+      return JSON.parse(text);
+    }
+    return null;
   }
 
   async text(): Promise<string> {
