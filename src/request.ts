@@ -1,314 +1,231 @@
-import {
-  format as URLFormat,
-  URL,
-} from 'url';
+import { Agent } from 'http';
+import { format as URLFormat, URL } from 'url';
+
+import * as FormData from 'form-data';
+import fetch, {
+  BodyInit,
+  Headers,
+  HeadersInit,
+  Request as FetchRequest,
+  RequestInit,
+  RequestRedirect,
+} from 'node-fetch';
+import { AbortSignal } from 'node-fetch/externals';
 
 import {
-  AvailableALPNProtocols,
-  Communications,
-} from './communications';
-import {
-  ALPNProtocols,
-  BodylessMethods,
   HTTPHeaders,
-  HTTPHeadersInterface,
-  HTTPProtocols,
-  HTTPSPort,
-  SupportedContentTypes,
+  HTTPMethods,
+  ContentTypes,
 } from './constants';
-import { MultipartFormData } from './contenttypes';
-import { AcceptedEncodings } from './encoder';
-import { RequestError } from './errors';
+import {
+  isBlob,
+  isFormData,
+  isURLSearchParameters,
+} from './is';
 import { Response } from './response';
 import { Route } from './route';
 
 
-export interface RequestFile {
-  contentType?: string,
-  data: any,
-  filename?: string,
-  name?: string,
+export interface RequestFile extends FormData.AppendOptions {
+  key?: string,
+  value: any,
 }
 
-export interface BasicRequestOptions {
-  body?: any,
+export interface RequestOptions {
+  agent?: Agent | ((parsedUrl: URL) => Agent),
+  body?: BodyInit | null | any,
+  compress?: boolean,
   files?: Array<RequestFile>,
+  follow?: number,
+  headers?: HeadersInit | Record<string, string | undefined>,
   jsonify?: boolean,
+  method?: string,
   multipart?: boolean,
-}
-
-export interface RequestSettings {
-  multipartJsonKey?: string,
+  path?: string,
+  query?: Record<string, any>,
+  redirect?: RequestRedirect,
+  route?: Route | {
+    method?: string,
+    params?: Record<string, any>,
+    path?: string,
+  } | null,
+  signal?: AbortSignal | null,
+  size?: number,
   timeout?: number,
+  url?: string | URL,
 }
 
-export interface RequestOptions extends BasicRequestOptions {
-  headers?: HTTPHeadersInterface,
-  method: string,
-  route?: Route,
-  settings: RequestSettings,
+export class Request extends FetchRequest {
+  readonly route: Route | null;
+
+  constructor(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ) {
+    init = Object.assign({jsonify: true}, init);
+
+    let url: URL;
+    if (typeof(info) === 'string' || info instanceof URL) {
+      url = new URL('', info);
+    } else {
+      init = Object.assign({}, info, init);
+      if (init.url) {
+        url = new URL('', init.url);
+      } else {
+        throw new Error('A URL is required.');
+      }
+    }
+
+    init.method = init.method || HTTPMethods.GET;
+
+    let route: Route | null = null;
+    if (init.route || init.path) {
+      if (init.route instanceof Route) {
+        route = init.route;
+      } else {
+        if (init.route) {
+          route = new Route(
+            init.route.method || init.method,
+            init.route.path || init.path,
+            init.route.params,
+          );
+        } else {
+          route = new Route(init.method, init.path);
+        }
+      }
+      init.method = route.method;
+    }
+    init.method = init.method.toUpperCase();
+
+    if (route) {
+      if (url.pathname.endsWith('/') && route.urlPath.startsWith('/')) {
+        url.pathname += route.urlPath.slice(1);
+      } else {
+        url.pathname += route.urlPath;
+      }
+    }
+
+    if (init.query) {
+      for (let key in init.query) {
+        appendQuery(url, key, init.query[key]);
+      }
+    }
+
+    init.headers = createHeaders(init.headers);
+
+    let body: any;
+    if (isFormData(init.body)) {
+      body = init.body;
+    }
+    if (((init.body !== undefined && init.body !== null) && init.multipart) || (init.files && init.files.length)) {
+      // convert the body to form-data if `init.body` is non-null and multipart is true OR if theres any files passed in
+      if (!body) {
+        body = new FormData();
+      }
+      if (init.files && init.files.length) {
+        for (let key in init.files) {
+          const file = init.files[key];
+          body.append(file.key || `file${key}`, file.value, file);
+        }
+      }
+      if (init.body !== undefined && init.body !== null && init.body !== body) {
+        if (isURLSearchParameters(init.body)) {
+          // go through the keys and add it to the form-data
+          for (let [key, value] of init.body) {
+            body.append(key, value);
+          }
+        } else if (isBlob(init.body)) {
+          // add it as a file?
+        } else {
+          if ((init.multipart || !init.jsonify) && typeof(init.body) === 'object') {
+            for (let key in init.body) {
+              body.append(key, init.body[key]);
+            }
+          } else {
+            // If an object is passed in as the body with files, but multipart isn't true or jsonify is false, encode it to json
+            const key = 'payload_json';
+            body.append(
+              key,
+              JSON.stringify(init.body),
+              {contentType: ContentTypes.APPLICATION_JSON},
+            );
+          }
+        }
+      }
+    } else if (init.body !== undefined) {
+      if (init.jsonify) {
+        init.headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
+        body = JSON.stringify(init.body);
+      } else {
+        body = init.body;
+      }
+    }
+    init.body = body;
+
+    super(url, init as RequestInit);
+    this.route = route;
+  }
+
+  get parsedUrl(): URL {
+    const url = (this.url as any);
+    if (url instanceof URL) {
+      return url;
+    }
+    return new URL(url);
+  }
+
+  clone() {
+    return new Request(this);
+  }
+
+  async send() {
+    const now = Date.now();
+    const response = await fetch(this.url, this);
+    return new Response(this, response, Date.now() - now);
+  }
+
+  toString(): string {
+    return `${this.method}-${URLFormat(this.url)}`;
+  }
+}
+
+
+export function appendQuery(
   url: URL,
+  key: string,
+  value: any,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let v of value) {
+      appendQuery(url, key, v);
+    }
+  } else {
+    if (typeof(value) !== 'string') {
+      value = String(value);
+    }
+    url.searchParams.append(key, value);
+  }
 }
 
-export class Request {
-  body: any;
-  options: {
-    headers: HTTPHeadersInterface,
-    hostname: string,
-    method: string,
-    path: string,
-    port: string,
-    protocol: string,
-  };
-  route: Route | null;
-  settings: RequestSettings;
-  url: URL;
 
-  constructor(options: RequestOptions) {
-    this.settings = Object.assign({}, options.settings);
-
-    this.url = options.url || {}
-    if (!this.url.protocol) {
-      this.url.protocol = 'https:';
-    }
-
-    this.options = {
-      method: options.method,
-      headers: options.headers || {},
-      protocol: this.url.protocol,
-      hostname: this.url.hostname,
-      port: this.url.port,
-      path: this.url.pathname + this.url.search,
-    };
-
-    if (AcceptedEncodings.length) {
-      this.options.headers[HTTPHeaders.ACCEPT_ENCODING] = AcceptedEncodings.join(',');
-    }
-
-    if (!Object.values(HTTPProtocols).includes(this.url.protocol)) {
-      throw new Error(`Protocol '${this.url.protocol}' not supported, only ${Object.values(HTTPProtocols).join(', ')}`);
-    }
-
-    this.body = null;
-    if ((options.body && options.multipart) || (options.files && options.files.length)) {
-      if (options.body instanceof MultipartFormData) {
-        this.body = options.body;
-      } else {
-        this.body = new MultipartFormData();
-      }
-      this.options.headers[HTTPHeaders.CONTENT_TYPE] = this.body.contentType;
-
-      if (options.files && options.files.length) {
-        for (let key in options.files) {
-          const file = options.files[key];
-          this.body.add(file.name || `file${key}`, file.data, file);
-        }
-      }
-      if (options.body && !(options.body instanceof MultipartFormData)) {
-        if (options.multipart) {
-          for (let key in options.body) {
-            this.body.add(key, options.body[key]);
-          }
-        } else {
-          const key = this.settings.multipartJsonKey || 'payload_json';
-          this.body.add(key, options.body);
-        }
-      }
-      this.body = this.body.done();
-    } else if (options.body !== undefined) {
-      if (options.jsonify || options.jsonify === undefined) {
-        // maybe set charset?
-        this.options.headers[HTTPHeaders.CONTENT_TYPE] = SupportedContentTypes.APPLICATION_JSON;
-        this.body = JSON.stringify(options.body);
-      } else {
-        this.body = options.body;
+export function createHeaders(
+  old?: HeadersInit | Record<string, string | undefined>,
+): Headers {
+  if (old instanceof Headers || (old && typeof((old as any)[Symbol.iterator]) === 'function')) {
+    return new Headers(old as HeadersInit);
+  } else if (old) {
+    // go through and pick out the undefined
+    const headers = new Headers();
+    for (let key in old) {
+      const value = (old as any)[key];
+      if (value !== undefined) {
+        headers.append(key, value);
       }
     }
-
-    if (!(HTTPHeaders.CONTENT_LENGTH in this.options.headers) && !BodylessMethods.includes(this.method)) {
-      let length = 0;
-      if (this.body) {
-        if (Array.isArray(this.body)) {
-          for (let chunk of this.body) {
-            length += Buffer.byteLength(chunk);
-          }
-        } else {
-          length += Buffer.byteLength(this.body);
-        }
-      }
-      this.options.headers[HTTPHeaders.CONTENT_LENGTH] = String(length);
-    }
-
-    this.route = options.route || null;
+    return headers;
   }
-
-  get method(): string {
-    return this.options.method;
-  }
-
-  get formatted(): string {
-    return this.toString();
-  }
-
-  _createRequest(): Promise<{
-    request: any,
-    info: {
-      alpn: string,
-      connection?: any,
-    },
-  }> {
-    return new Promise((resolve, reject) => {
-      switch (this.options.protocol) {
-        case HTTPProtocols.HTTP: {
-          resolve({
-            request: Communications.HTTP.request({
-              headers: this.options.headers,
-              hostname: this.options.hostname,
-              method: this.options.method,
-              path: this.options.path,
-              port: this.options.port,
-              protocol: this.options.protocol,
-            }),
-            info: {alpn: ALPNProtocols.NONE},
-          });
-        }; break;
-        case HTTPProtocols.HTTPS: {
-          this.options.port = String(this.options.port || HTTPSPort);
-          const socket = Communications.TLS.connect({
-            host: this.options.hostname,
-            port: parseInt(this.options.port),
-            servername: this.options.hostname,
-            ALPNProtocols: AvailableALPNProtocols,
-          });
-
-          socket.once('error', (error: any) => {
-            socket.destroy();
-            reject(new RequestError(error, this));
-          });
-          socket.once('secureConnect', () => {
-            if (!socket.authorized) {
-              socket.destroy();
-              return reject(new RequestError(socket.authorizationError, this));
-            }
-
-            // temporary fix for https://github.com/nodejs/node/pull/33209
-            socket.secureConnecting = false;
-            switch (socket.alpnProtocol) {
-              case false:
-              case ALPNProtocols.HTTP1:
-              case ALPNProtocols.HTTP1_1: {
-                resolve({
-                  request: Communications.HTTPS.request({
-                    createConnection: () => socket,
-                    ...this.options,
-                  }),
-                  info: {
-                    alpn: socket.alpnProtocol || ALPNProtocols.NONE,
-                  },
-                });
-              }; break;
-              case ALPNProtocols.HTTP2: {
-                const connection = Communications.HTTP2.connect({
-                  host: this.options.hostname,
-                  port: parseInt(this.options.port),
-                }, {
-                  createConnection: () => socket,
-                });
-
-                const options = Object.assign({}, this.options.headers, {
-                  ':method': this.options.method,
-                  ':authority': this.options.hostname,
-                  ':path': this.options.path,
-                });
-
-                resolve({
-                  request: connection.request(options),
-                  info: {
-                    alpn: socket.alpnProtocol,
-                    connection,
-                  },
-                });
-              }; break;
-              default: {
-                socket.destroy();
-                reject(new RequestError(`Invalid ALPN Protocol returned: ${socket.alpnProtocol}`, this));
-              };
-            }
-          });
-        }; break;
-        default: {
-          reject(new RequestError(`Invalid Request Protocol: ${this.options.protocol}`, this));
-        };
-      }
-    });
-  }
-
-  async send(): Promise<any> {
-    const { request, info } = await this._createRequest();
-
-    return new Promise((resolve, reject) => {
-      switch (info.alpn) {
-        case ALPNProtocols.NONE:
-        case ALPNProtocols.HTTP1:
-        case ALPNProtocols.HTTP1_1: {
-          let error: Error;
-          request.once('abort', () => {
-            let requestError: RequestError;
-            if (error) {
-              requestError = new RequestError(error, this);
-            } else {
-              requestError = new RequestError('Request aborted by the client.', this);
-            }
-            reject(requestError);
-          }).on('error', (e: any) => {
-            if (request.aborted) {
-              // we already handled the error from abort
-              return;
-            }
-            reject(new RequestError(e, this));
-          });
-
-          const now = Date.now();
-          request.once('response', (response: any) => {
-            resolve(new Response(this, response, info, Date.now() - now));
-          }).setTimeout(this.settings.timeout, () => {
-            error = new Error(`[Request lasted for more than ${this.settings.timeout}ms.`);
-            request.abort();
-          });
-        }; break;
-        case ALPNProtocols.HTTP2: {
-          let error: RequestError | Error;
-          request.on('error', (e: any) => {
-            error = e;
-          }).once('close', () => {
-            if (!error) {return;}
-            info.connection.close();
-            error = new RequestError(error, this);
-            reject(error);
-          });
-
-          const now = Date.now();
-          request.once('response', (headers: HTTPHeadersInterface) => {
-            resolve(new Response(this, request, info, Date.now() - now, headers));
-          }).setTimeout(this.settings.timeout, () => {
-            error = new Error(`Request lasted for more than ${this.settings.timeout}ms.`);
-            request.close();
-          });
-        }; break;
-      }
-
-      if (Array.isArray(this.body)) {
-        for (let chunk of this.body) {
-          request.write(chunk);
-        }
-        request.end();
-      } else {
-        request.end(this.body);
-      }
-    });
-  }
-
-  toString() {
-    return `${this.options.method}-${URLFormat(this.url)}`;
-  }
+  return new Headers();
 }

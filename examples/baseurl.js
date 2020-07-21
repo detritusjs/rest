@@ -9,7 +9,7 @@ const DetritusRest = require('../lib');
     const response = await client.request({
       path: '/httpbin/get',
     });
-    const body = await response.body();
+    const body = await response.json();
     console.log(body);
   } catch(error) {
     console.error(error);

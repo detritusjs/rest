@@ -11,7 +11,7 @@ const DetritusRest = require('../lib');
       method: 'post',
       url: 'https://nghttp2.org/httpbin/post',
     });
-    const body = await response.body();
+    const body = await response.json();
     console.log(body);
   } catch(error) {
     console.error(error);

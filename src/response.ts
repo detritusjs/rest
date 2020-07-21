@@ -1,197 +1,120 @@
-import {
-  ALPNProtocols,
-  HTTPHeaders,
-  HTTPHeadersInterface,
-  HTTPStatusCodes,
-  SupportedContentTypes,
-} from './constants';
-import { decodeMultiple } from './encoder';
-import { ResponseError } from './errors';
+import { Blob, Headers, Response as FetchResponse } from 'node-fetch';
+
+import { HTTPHeaders } from './constants';
 import { Request } from './request';
 
 
-const EmptyBodyCodes: Array<HTTPStatusCodes> = [
-  HTTPStatusCodes.NO_CONTENT,
-  HTTPStatusCodes.NOT_MODIFIED,
-];
-
-
 export class Response {
-  readonly alpn: string;
-  readonly connection: any;
-  readonly contentType: string;
-  readonly headers: HTTPHeadersInterface;
+  readonly fetchResponse: FetchResponse;
   readonly request: Request;
-  readonly statusCode: number;
-  readonly stream: any;
   readonly took: number;
 
-  data: Buffer | null | undefined;
-  ended: boolean = false;
+  _body: Promise<Buffer> | Buffer | null = null;
 
-  constructor(
-    request: Request,
-    response: any,
-    info: {
-      alpn: string,
-      connection?: any,
-    },
-    took: number,
-    headers?: HTTPHeadersInterface,
-  ) {
+  constructor(request: Request, response: FetchResponse, took: number = 0) {
+    this.fetchResponse = response;
     this.request = request;
     this.took = took;
 
-    switch (info.alpn) {
-      case ALPNProtocols.NONE:
-      case ALPNProtocols.HTTP1:
-      case ALPNProtocols.HTTP1_1: {
-        this.headers = response.headers;
-        this.statusCode = response.statusCode;
-      }; break;
-      case ALPNProtocols.HTTP2: {
-        this.headers = headers || {};
-        this.statusCode = parseInt(this.headers[HTTPHeaders.HTTP2_STATUS]);
-      }; break;
-      default: {
-        throw new ResponseError(`Invalid ALPN Protocol: ${info.alpn}`, this);
-      };
-    }
-
-    this.alpn = info.alpn;
-    this.connection = info.connection;
-    this.data = undefined;
-    this.stream = response;
-
     Object.defineProperties(this, {
-      connection: {enumerable: false, writable: false},
-      data: {enumerable: false},
-      stream: {enumerable: false, writable: false},
+      _body: {enumerable: false},
     });
-
-    this.contentType = (this.headers[HTTPHeaders.CONTENT_TYPE] || '').split(';').shift() || '';
   }
 
-  get closed(): boolean {
-    switch (this.alpn) {
-      case ALPNProtocols.NONE:
-      case ALPNProtocols.HTTP1:
-      case ALPNProtocols.HTTP1_1: {
-        return this.ended;
-      };
-      case ALPNProtocols.HTTP2: {
-        return this.stream.closed;
-      };
-    }
-    return true;
+  get body(): NodeJS.ReadableStream | null {
+    return this.fetchResponse.body;
+  }
+
+  get bodyUsed(): boolean {
+    return this.fetchResponse.bodyUsed;
+  }
+
+  get headers(): Headers {
+    return this.fetchResponse.headers;
   }
 
   get ok(): boolean {
-    return HTTPStatusCodes.OK <= this.statusCode && this.statusCode < HTTPStatusCodes.MULTIPLE_CHOICES;
+    return this.fetchResponse.ok;
   }
 
-  close(): void {
-    // if you dont get/want data, use this if http2 is used
-    switch (this.alpn) {
-      case ALPNProtocols.HTTP2: {
-        if (!this.stream.closed) {
-          this.stream.close();
-        }
-        if (!this.connection.closed) {
-          this.connection.close();
-        }
-      }; break;
-    }
-    this.ended = true;
+  get redirected(): boolean {
+    return this.fetchResponse.redirected;
   }
 
-  buffer(): Promise<Buffer | null> {
-    return new Promise((resolve, reject) => {
-      if (this.closed) {
-        if (this.data === undefined) {
-          return reject(new ResponseError(`Cannot get the body of a closed response.`, this));
-        }
-        return resolve(this.data);
-      }
-      this.stream.once('aborted', () => {
-        reject(new ResponseError(`Response was aborted by the server.`, this));
-      });
-
-      let stream = this.stream;
-      if (
-        HTTPHeaders.CONTENT_ENCODING in this.headers &&
-        this.headers[HTTPHeaders.CONTENT_LENGTH] !== '0' &&
-        !EmptyBodyCodes.includes(this.statusCode)
-      ) {
-        stream = decodeMultiple(stream, this.headers[HTTPHeaders.CONTENT_ENCODING].split(','));
-      }
-
-      const body: Array<Buffer> = [];
-      stream.on('data', (data: Buffer) => {
-        body.push(data);
-      }).once('end', () => {
-        this.close();
-        switch (this.alpn) {
-          case ALPNProtocols.NONE:
-          case ALPNProtocols.HTTP1:
-          case ALPNProtocols.HTTP1_1: {
-            if (!this.stream.complete) {
-              return reject(new ResponseError(`Response connection was terminated while receiving message.`, this));
-            }
-          }; break;
-        }
-
-        if (body.length) {
-          if (body.length === 1) {
-            this.data = body.shift();
-          } else {
-            this.data = Buffer.concat(body);
-          }
-        } else {
-          this.data = null;
-        }
-
-        resolve(this.data);
-      });
-    });
+  get size(): number {
+    return this.fetchResponse.size;
   }
 
-  async body(): Promise<any> {
+  get status(): number {
+    return this.fetchResponse.status;
+  }
+
+  get statusCode(): number {
+    return this.status;
+  }
+
+  get statusText(): string {
+    return this.fetchResponse.statusText;
+  }
+
+  get url(): string {
+    return this.fetchResponse.url;
+  }
+
+  async arrayBuffer(): Promise<ArrayBuffer> {
+    const {buffer, byteOffset, byteLength} = await this.buffer();
+		return buffer.slice(byteOffset, byteOffset + byteLength);
+  }
+
+  async blob(): Promise<Blob> {
+    const contentType = this.headers.get(HTTPHeaders.CONTENT_TYPE) || (this.body && (<any> this.body).type) || '';
     const buffer = await this.buffer();
-    if (buffer instanceof Buffer) {
-      switch (this.contentType) {
-        case SupportedContentTypes.APPLICATION_JSON: {
-          return JSON.parse(String(buffer));
-        };
-        case SupportedContentTypes.TEXT_PLAIN: {
-          return String(buffer);
-        };
-        default: {
-          if (this.contentType.startsWith('text/')) {
-            return String(buffer);
-          }
-        };
-      }
-    }
-    return buffer;
+
+    return new Blob([buffer], {type: contentType});
   }
 
-  async json(): Promise<any> {
-    const buffer = await this.buffer();
-    if (buffer instanceof Buffer) {
-      return JSON.parse(String(buffer));
+  async buffer(): Promise<Buffer> {
+    if (this._body) {
+      return this._body;
     }
+    this._body = this.fetchResponse.buffer();
+    return this._body = await this._body;
+  }
+
+  async json(): Promise<unknown> {
+    const text = await this.text();
+    if (text) {
+      return JSON.parse(text);
+    }
+    return null;
   }
 
   async text(): Promise<string> {
-    const buffer = await this.buffer();
-    if (buffer instanceof Buffer) {
-      return String(buffer);
-    }
-    return '';
+    return (await this.buffer()).toString();
   }
 
-  toString() {
+  clone() {
+    return new Response(this.request, this.fetchResponse);
+  }
+
+  toString(): string {
     return this.request.toString();
   }
 }
+
+
+Object.defineProperties(Response.prototype, {
+  arrayBuffer: {enumerable: true},
+  blob: {enumerable: true},
+  body: {enumerable: true},
+  bodyUsed: {enumerable: true},
+  clone: {enumerable: true},
+  headers: {enumerable: true},
+  json: {enumerable: true},
+  ok: {enumerable: true},
+  redirected: {enumerable: true},
+  status: {enumerable: true},
+  statusText: {enumerable: true},
+  text: {enumerable: true},
+  url: {enumerable: true},
+});

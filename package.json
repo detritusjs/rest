@@ -1,36 +1,37 @@
 {
-  "name": "detritus-rest",
-  "version": "0.4.0",
+  "author": "cakedan",
+  "bugs": {
+    "url": "https://github.com/detritusjs/rest/issues"
+  },
+  "dependencies": {
+    "form-data": "^3.0.0",
+    "node-fetch": "^2.6.0"
+  },
   "description": "some js rest library",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "devDependencies": {
+    "@types/node": "^13.13.14",
+    "@types/node-fetch": "^2.5.7"
+  },
   "files": [
     "lib/**/*"
   ],
-  "dependencies": {},
-  "devDependencies": {
-    "@types/node": "^13.13.4"
-  },
-  "peerDependencies": {
-    "iltorb": "^2.3.0"
+  "homepage": "https://github.com/detritusjs/rest#readme",
+  "keywords": [
+    "rest",
+    "library"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "name": "detritus-rest",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/detritusjs/rest.git"
   },
   "scripts": {
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
     "prepare": "npm run build"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/detritusjs/rest.git"
-  },
-  "keywords": [
-    "rest",
-    "library"
-  ],
-  "author": "cakedan",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/detritusjs/rest/issues"
-  },
-  "homepage": "https://github.com/detritusjs/rest#readme"
+  "types": "lib/index.d.ts",
+  "version": "0.6.0-beta"
 }

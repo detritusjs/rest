@@ -1,5 +1,5 @@
 export interface RouteParameters {
-  [key: string]: string,
+  [key: string]: any,
 }
 
 export class Route {
@@ -29,7 +29,7 @@ export function replacePathParameters(
 ): string {
   return path.replace(PathReplacementRegexp, (match: string, key: string) => {
     if (key in parameters) {
-      return encodeURIComponent(parameters[key]);
+      return encodeURIComponent(String(parameters[key]));
     }
     return match;
   });

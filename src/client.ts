@@ -1,69 +1,38 @@
+import { Agent } from 'http';
 import { URL } from 'url';
 
+import { Headers, HeadersInit } from 'node-fetch';
+
 import {
-  BodylessMethods,
   HTTPHeaders,
-  HTTPHeadersInterface,
   HTTPMethods,
   Package,
 } from './constants';
-
-import {
-  BasicRequestOptions,
-  Request,
-  RequestSettings,
-} from './request';
-import { Route } from './route';
-
-
-export interface RequestRoute {
-  method?: string,
-  params?: {
-    [key: string]: string,
-  },
-  path?: string,
-  urlPath?: null,
-}
-
-export interface BeforeRequestOptions extends BasicRequestOptions {
-  headers?: {[key: string]: string | undefined},
-  method?: string,
-  path?: string,
-  query?: {
-    [key: string]: any,
-  },
-  route?: Route | RequestRoute,
-  settings?: RequestSettings,
-  url?: string | URL,
-}
+import { createHeaders, Request, RequestOptions } from './request';
+import { Response } from './response';
 
 
 const defaultClientOptions = Object.freeze({
-  settings: {
-    timeout: 20000,
-  },
   headers: {
     [HTTPHeaders.USER_AGENT]: `detritus-rest (${Package.URL}, ${Package.VERSION})`,
   },
 });
 
-export interface ClientSettings {
-  timeout?: number,
-}
-
 export interface ClientOptions {
+  agent?: Agent | ((parsedUrl: URL) => Agent),
   baseUrl?: string | URL,
-  headers?: {[key: string]: string | undefined},
-  settings?: ClientSettings,
+  headers?: HeadersInit | Record<string, string | undefined>,
 }
 
 export class Client {
+  agent?: Agent | ((parsedUrl: URL) => Agent);
   baseUrl: string | URL;
-  headers: HTTPHeadersInterface;
-  settings: ClientSettings;
+  headers: Headers;
 
   constructor(options?: ClientOptions) {
     options = Object.assign({}, defaultClientOptions, options);
+
+    this.agent = options.agent;
 
     this.baseUrl = '';
     if (options.baseUrl) {
@@ -74,197 +43,115 @@ export class Client {
       }
     }
 
-    this.headers = Object.assign({}, defaultClientOptions.headers);
-    if (options.headers) {
-      for (let key in options.headers) {
-        if (options.headers[key] !== undefined) {
-          this.headers[key.toLowerCase()] = <string> options.headers[key];
-        }
+    this.headers = createHeaders(options.headers);
+    for (let key in defaultClientOptions.headers) {
+      if (!this.headers.has(key)) {
+        const value = (defaultClientOptions.headers as any)[key];
+        this.headers.set(key, value);
       }
     }
-
-    this.settings = Object.assign({}, defaultClientOptions.settings, options.settings);
   }
 
-  async createRequest(
-    options?: BeforeRequestOptions | string,
-  ): Promise<Request> {
-    if (typeof(options) === 'string') {
-      options = {url: options};
+  createRequest(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Request {
+    // inject base options from the client here
+    init = Object.assign({
+      agent: this.agent,
+    }, init);
+
+    let url: string | URL;
+    if (typeof(info) === 'string' || info instanceof URL) {
+      url = info;
     } else {
-      options = Object.assign({}, options);
-    }
-
-    let method = options.method;
-    if (!method) {
-      // set the method before it creates the route incase route doesn't contain one
-      method = HTTPMethods.GET;
-    }
-
-    if (options.route || options.path) {
-      if (!options.route) {
-        options.route = {};
-      }
-      if (!(options.route instanceof Route)) {
-        options.route = new Route(
-          options.route.method || method,
-          options.route.path || options.path,
-          options.route.params,
-        );
-      }
-      method = options.route.method;
-    }
-
-    method = method.toUpperCase(); // http2 requires uppercase
-
-    if (!options.url && !options.route) {
-      throw new Error('URL or Path has to be specified in a request!');
-    }
-
-    let url: URL;
-    if (options.route) {
-      if (!this.baseUrl && !options.url) {
-        throw new Error('Route or Path cannot be used without a url specified!');
-      }
-      url = new URL('', options.url || this.baseUrl);
-      if (url.pathname.endsWith('/') && options.route.urlPath.startsWith('/')) {
-        url.pathname += options.route.urlPath.slice(1);
+      init = Object.assign({}, info, init);
+      if (init.url || (this.baseUrl && (init.path || (init.route && init.route.path)))) {
+        url = init.url || this.baseUrl;
       } else {
-        url.pathname += options.route.urlPath;
+        if (this.baseUrl) {
+          throw new Error('A Path is required if using the base URL from the client');
+        } else {
+          throw new Error('A URL is required if there is no base URL');
+        }
+      }
+    }
+
+    if (init.headers) {
+      init.headers = createHeaders(init.headers);
+      for (let [key, value] of this.headers) {
+        if (!init.headers.has(key)) {
+          init.headers.set(key, value);
+        }
       }
     } else {
-      url = new URL('', options.url);
+      init.headers = new Headers(this.headers);
     }
 
-    if (options.query) {
-      for (let key in options.query) {
-        appendQuery(url, key, options.query[key]);
-      }
-    }
-
-    let body = options.body;
-    if (body && BodylessMethods.includes(method)) {
-      // treat body as query
-      if (typeof(body) === 'object') {
-        for (let key in body) {
-          appendQuery(url, key, body[key]);
-        }
-      }
-      body = null;
-    }
-
-    const headers = Object.assign({}, this.headers);
-    if (options.headers) {
-      for (let key in options.headers) {
-        if (options.headers[key] !== undefined) {
-          headers[key.toLowerCase()] = <string> options.headers[key];
-        }
-      }
-    }
-
-    return new Request({
-      body,
-      files: options.files,
-      headers,
-      jsonify: options.jsonify,
-      method,
-      multipart: options.multipart,
-      route: options.route,
-      settings: Object.assign({}, this.settings, options.settings),
-      url,
-    });
+    return new Request(url, init);
   }
 
   async request(
-    options?: BeforeRequestOptions | string,
-  ): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {url: options};
-    }
-    const request = await this.createRequest(options);
-    return await request.send();
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    const request = this.createRequest(info, init);
+    return request.send();
   }
 
-  async delete(options?: BeforeRequestOptions | string): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {method: HTTPMethods.DELETE, url: options};
-    } else {
-      options = Object.assign({}, options, {method: HTTPMethods.DELETE});
-    }
-    return this.request(options);
+  async delete(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    init = Object.assign({}, init, {method: HTTPMethods.DELETE});
+    return this.request(info, init);
   }
 
-  async get(options?: BeforeRequestOptions | string): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {method: HTTPMethods.GET, url: options};
-    } else {
-      options = Object.assign({}, options, {method: HTTPMethods.GET});
-    }
-    return this.request(options);
+  async get(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    init = Object.assign({}, init, {method: HTTPMethods.GET});
+    return this.request(info, init);
   }
 
-  async head(options?: BeforeRequestOptions | string): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {method: HTTPMethods.HEAD, url: options};
-    } else {
-      options = Object.assign({}, options, {method: HTTPMethods.HEAD});
-    }
-    return this.request(options);
+  async head(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    init = Object.assign({}, init, {method: HTTPMethods.HEAD});
+    return this.request(info, init);
   }
 
-  async options(options?: BeforeRequestOptions | string): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {method: HTTPMethods.OPTIONS, url: options};
-    } else {
-      options = Object.assign({}, options, {method: HTTPMethods.OPTIONS});
-    }
-    return this.request(options);
+  async options(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    init = Object.assign({}, init, {method: HTTPMethods.OPTIONS});
+    return this.request(info, init);
   }
 
-  async patch(options?: BeforeRequestOptions | string): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {method: HTTPMethods.PATCH, url: options};
-    } else {
-      options = Object.assign({}, options, {method: HTTPMethods.PATCH});
-    }
-    return this.request(options);
+  async patch(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    init = Object.assign({}, init, {method: HTTPMethods.PATCH});
+    return this.request(info, init);
   }
 
-  async post(options?: BeforeRequestOptions | string): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {method: HTTPMethods.POST, url: options};
-    } else {
-      options = Object.assign({}, options, {method: HTTPMethods.POST});
-    }
-    return this.request(options);
+  async post(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    init = Object.assign({}, init, {method: HTTPMethods.POST});
+    return this.request(info, init);
   }
 
-  async put(options?: BeforeRequestOptions | string): Promise<any> {
-    if (typeof(options) === 'string') {
-      options = {method: HTTPMethods.PUT, url: options};
-    } else {
-      options = Object.assign({}, options, {method: HTTPMethods.PUT});
-    }
-    return this.request(options);
-  }
-}
-
-export function appendQuery(
-  url: URL,
-  key: string,
-  value: any,
-): void {
-  if (value === undefined) {
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (let v of value) {
-      appendQuery(url, key, v);
-    }
-  } else {
-    if (typeof(value) !== 'string') {
-      value = String(value);
-    }
-    url.searchParams.append(key, value);
+  async put(
+    info: string | URL | RequestOptions,
+    init?: RequestOptions,
+  ): Promise<Response> {
+    init = Object.assign({}, init, {method: HTTPMethods.PUT});
+    return this.request(info, init);
   }
 }

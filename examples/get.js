@@ -5,7 +5,7 @@ const DetritusRest = require('../lib');
 
   try {
     const response = await client.request('https://nghttp2.org/httpbin/get');
-    const body = await response.body();
+    const body = await response.json();
     console.log(body);
   } catch(error) {
     console.error(error);

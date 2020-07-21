@@ -15,8 +15,8 @@ const DetritusRest = require('../lib');
         },
       },
     });
-    const body = await response.body();
-    console.log(response, response.request, body);
+    const body = await response.json();
+    console.log(response, body);
   } catch(error) {
     console.error(error);
   }

@@ -1,8 +1,15 @@
 export const Package = Object.freeze({
   URL: 'https://github.com/detritusjs/rest',
-  VERSION: '0.4.0',
+  VERSION: '0.6.0',
 });
 
+
+export enum ContentTypes {
+  APPLICATION_JSON = 'application/json',
+  APPLICATION_OCTET_STREAM = 'application/octet-stream',
+  MULTIPART_FORM_DATA = 'multipart/form-data',
+  TEXT_PLAIN = 'text/plain',
+};
 
 export enum HTTPHeaders {
   HTTP2_AUTHORITY = ':authority',
@@ -18,10 +25,6 @@ export enum HTTPHeaders {
   USER_AGENT = 'user-agent',
 };
 
-export interface HTTPHeadersInterface {
-  [key: string]: string,
-};
-
 export enum HTTPMethods {
   DELETE = 'DELETE',
   GET = 'GET',
@@ -30,17 +33,6 @@ export enum HTTPMethods {
   PATCH = 'PATCH',
   POST = 'POST',
   PUT = 'PUT',
-};
-
-export const BodylessMethods: Array<string> = [
-  HTTPMethods.GET,
-  HTTPMethods.HEAD,
-  HTTPMethods.OPTIONS,
-];
-
-export enum HTTPProtocols {
-  HTTP = 'http:',
-  HTTPS = 'https:',
 };
 
 export enum HTTPStatusCodes {
@@ -107,20 +99,4 @@ export enum HTTPStatusCodes {
   BANDWIDTH_LIMIT_EXCEEDED = 509,
   NOT_EXTENDED = 510,
   NETWORK_AUTHENTICATION_REQUIRED = 511
-};
-
-export const HTTPSPort = 443;
-
-export enum ALPNProtocols {
-  NONE = 'NONE',
-  HTTP1 = 'http/1.0',
-  HTTP1_1 = 'http/1.1',
-  HTTP2 = 'h2',
-};
-
-export enum SupportedContentTypes {
-  APPLICATION_JSON = 'application/json',
-  APPLICATION_OCTET_STREAM = 'application/octet-stream',
-  MULTIPART_FORM_DATA = 'multipart/form-data',
-  TEXT_PLAIN = 'text/plain',
 };
