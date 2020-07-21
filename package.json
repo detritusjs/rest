@@ -9,7 +9,7 @@
   },
   "description": "some js rest library",
   "devDependencies": {
-    "@types/node": "^13.13.12",
+    "@types/node": "^13.13.14",
     "@types/node-fetch": "^2.5.7"
   },
   "files": [
@@ -33,5 +33,5 @@
     "prepare": "npm run build"
   },
   "types": "lib/index.d.ts",
-  "version": "0.6.0-beta.4"
+  "version": "0.6.0-beta"
 }
