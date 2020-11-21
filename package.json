@@ -5,11 +5,11 @@
   },
   "dependencies": {
     "form-data": "^3.0.0",
-    "node-fetch": "^2.6.0"
+    "node-fetch": "^2.6.1"
   },
   "description": "some js rest library",
   "devDependencies": {
-    "@types/node": "^13.13.14",
+    "@types/node": "^14.14.9",
     "@types/node-fetch": "^2.5.7"
   },
   "files": [
@@ -33,5 +33,5 @@
     "prepare": "npm run build"
   },
   "types": "lib/index.d.ts",
-  "version": "0.6.0"
+  "version": "0.7.0"
 }

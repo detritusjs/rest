@@ -1,6 +1,6 @@
 export const Package = Object.freeze({
   URL: 'https://github.com/detritusjs/rest',
-  VERSION: '0.6.0',
+  VERSION: '0.7.0',
 });
 
 
