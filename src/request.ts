@@ -10,7 +10,6 @@ import fetch, {
   RequestInit,
   RequestRedirect,
 } from 'node-fetch';
-import { AbortSignal } from 'node-fetch/externals';
 
 import {
   HTTPHeaders,
