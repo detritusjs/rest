@@ -1,4 +1,5 @@
-import { Blob, Headers, Response as FetchResponse } from 'node-fetch';
+import { Headers, Response as FetchResponse } from 'node-fetch';
+import { Blob } from 'fetch-blob/from.js';
 
 import { HTTPHeaders } from './constants';
 import { Request } from './request';

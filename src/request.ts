@@ -25,6 +25,13 @@ import { Response } from './response';
 import { Route } from './route';
 
 
+export type AbortSignal = {
+	readonly aborted: boolean;
+
+	addEventListener: (type: 'abort', listener: (this: AbortSignal) => void) => void;
+	removeEventListener: (type: 'abort', listener: (this: AbortSignal) => void) => void;
+};
+
 export interface RequestFile extends FormData.AppendOptions {
   key?: string,
   value: any,
@@ -50,7 +57,6 @@ export interface RequestOptions {
   } | null,
   signal?: AbortSignal | null,
   size?: number,
-  timeout?: number,
   url?: string | URL,
 }
 
@@ -110,7 +116,7 @@ export class Request extends FetchRequest {
       }
     }
 
-    init.headers = createHeaders(init.headers);
+    const headers = createHeaders(init.headers);
 
     let body: any;
     if (isFormData(init.body)) {
@@ -122,10 +128,9 @@ export class Request extends FetchRequest {
         body = new FormData();
       }
       if (init.files && init.files.length) {
-        let key = 0;
-        for (let file of init.files) {
-          key++
-          body.append(file.key || `file${key}`, file.value, file);
+        for (let i = 0; i < init.files.length; i++) {
+          const file = init.files[i];
+          body.append(file.key || `file[${i}]`, file.value, file);
         }
       }
       if (init.body !== undefined && init.body !== null && init.body !== body) {
@@ -154,15 +159,16 @@ export class Request extends FetchRequest {
       }
     } else if (init.body !== undefined) {
       if (init.jsonify) {
-        init.headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
+        headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
         body = JSON.stringify(init.body);
       } else {
         body = init.body;
       }
     }
     init.body = body;
+    init.headers = headers;
 
-    super(url, init as RequestInit);
+    super(url as unknown as string, init as RequestInit);
     this.route = route;
   }
 

@@ -78,12 +78,13 @@ export class Client {
     }
 
     if (init.headers) {
-      init.headers = createHeaders(init.headers);
+      const headers = createHeaders(init.headers);
       for (let [key, value] of this.headers) {
-        if (!init.headers.has(key)) {
-          init.headers.set(key, value);
+        if (!headers.has(key)) {
+          headers.set(key, value);
         }
       }
+      init.headers = headers;
     } else {
       init.headers = new Headers(this.headers);
     }
