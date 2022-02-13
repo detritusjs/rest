@@ -122,8 +122,9 @@ export class Request extends FetchRequest {
         body = new FormData();
       }
       if (init.files && init.files.length) {
-        for (let key in init.files) {
-          const file = init.files[key];
+        let key = 0;
+        for (let file of init.files) {
+          key++
           body.append(file.key || `file${key}`, file.value, file);
         }
       }
