@@ -73,6 +73,8 @@ export interface RequestOptions {
 }
 
 export class Request extends FetchRequest {
+  declare clone: () => Request;
+
   readonly controller?: AbortController;
   readonly route: Route | null;
   readonly timeout?: number;
@@ -199,11 +201,6 @@ export class Request extends FetchRequest {
     return new URL(url);
   }
 
-  // @ts-ignore
-  clone(): Request {
-    return new Request(this);
-  }
-
   async send() {
     const now = Date.now();
 
@@ -228,6 +225,9 @@ export class Request extends FetchRequest {
     return `${this.method}-${URLFormat(this.url)}`;
   }
 }
+
+
+(Request as any).prototype.clone = function() {return new Request(this);}
 
 
 export function appendQuery(
