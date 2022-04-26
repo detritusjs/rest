@@ -1,15 +1,18 @@
-import { Agent } from 'http';
+import { Blob } from 'buffer';
 import { format as URLFormat, URL } from 'url';
 
-import * as FormData from 'form-data';
-import fetch, {
+import {
+  fetch,
   BodyInit,
+  FormData,
   Headers,
   HeadersInit,
   Request as FetchRequest,
   RequestInit,
   RequestRedirect,
-} from 'node-fetch';
+} from 'undici';
+
+import { Timers } from 'detritus-utils';
 
 import {
   HTTPHeaders,
@@ -32,39 +35,50 @@ export type AbortSignal = {
 	removeEventListener: (type: 'abort', listener: (this: AbortSignal) => void) => void;
 };
 
-export interface RequestFile extends FormData.AppendOptions {
+export interface RequestFile {
+  contentType?: string,
+  filename?: string,
   key?: string,
   value: any,
 }
 
 export interface RequestOptions {
-  agent?: Agent | ((parsedUrl: URL) => Agent),
   body?: BodyInit | null | any,
-  compress?: boolean,
   files?: Array<RequestFile>,
-  follow?: number,
-  headers?: HeadersInit | Record<string, string | undefined>,
   jsonify?: boolean,
-  method?: string,
   multipart?: boolean,
   path?: string,
   query?: Record<string, any>,
-  redirect?: RequestRedirect,
   route?: Route | {
     method?: string,
     params?: Record<string, any>,
     path?: string,
   } | null,
-  signal?: AbortSignal | null,
   size?: number,
+  timeout?: number,
   url?: string | URL,
+
+  credentials?: RequestCredentials,
+  follow?: number,
+  headers?: HeadersInit | Record<string, string | undefined>,
+  integrity?: string,
+  keepalive?: boolean,
+  method?: string,
+  mode?: RequestMode,
+  redirect?: RequestRedirect,
+  referrer?: string,
+  referrerPolicy?: ReferrerPolicy | string,
+  signal?: AbortSignal | null,
+  window?: null,
 }
 
 export class Request extends FetchRequest {
+  readonly controller?: AbortController;
   readonly route: Route | null;
+  readonly timeout?: number;
 
   constructor(
-    info: string | URL | RequestOptions,
+    info: string | URL | RequestOptions | Request,
     init?: RequestOptions,
   ) {
     init = Object.assign({jsonify: true}, init);
@@ -130,7 +144,8 @@ export class Request extends FetchRequest {
       if (init.files && init.files.length) {
         for (let i = 0; i < init.files.length; i++) {
           const file = init.files[i];
-          body.append(file.key || `file[${i}]`, file.value, file);
+          const blob = new Blob([file.value], (file.contentType) ? {type: file.contentType} : undefined);
+          body.append(file.key || `file[${i}]`, blob, file.filename);
         }
       }
       if (init.body !== undefined && init.body !== null && init.body !== body) {
@@ -149,11 +164,7 @@ export class Request extends FetchRequest {
           } else {
             // If an object is passed in as the body with files, but multipart isn't true or jsonify is false, encode it to json
             const key = 'payload_json';
-            body.append(
-              key,
-              JSON.stringify(init.body),
-              {contentType: ContentTypes.APPLICATION_JSON},
-            );
+            body.append(key, JSON.stringify(init.body));
           }
         }
       }
@@ -168,8 +179,16 @@ export class Request extends FetchRequest {
     init.body = body;
     init.headers = headers;
 
+    let controller: AbortController | undefined;
+    if (init.timeout) {
+      controller = new AbortController();
+      init.signal = controller.signal;
+    }
+
     super(url as unknown as string, init as RequestInit);
+    this.controller = controller;
     this.route = route;
+    this.timeout = init.timeout;
   }
 
   get parsedUrl(): URL {
@@ -180,13 +199,28 @@ export class Request extends FetchRequest {
     return new URL(url);
   }
 
-  clone() {
+  // @ts-ignore
+  clone(): Request {
     return new Request(this);
   }
 
   async send() {
     const now = Date.now();
-    const response = await fetch(this.url, this);
+
+    let timeout: Timers.Timeout | undefined;
+    if (this.timeout && this.controller) {
+      timeout = new Timers.Timeout();
+      timeout.start(this.timeout, () => {
+        if (this.controller) {
+          this.controller.abort(`Request took longer than ${this.timeout}ms`);
+        }
+      });
+    }
+
+    const response = await fetch(this.url, this as RequestInit);
+    if (timeout) {
+      timeout.stop();
+    }
     return new Response(this, response, Date.now() - now);
   }
 

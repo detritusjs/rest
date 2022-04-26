@@ -1,5 +1,4 @@
-import { Headers, Response as FetchResponse } from 'node-fetch';
-import { Blob } from 'fetch-blob/from.js';
+import { Headers, Response as FetchResponse } from 'undici';
 
 import { HTTPHeaders } from './constants';
 import { Request } from './request';
@@ -10,7 +9,8 @@ export class Response {
   readonly request: Request;
   readonly took: number;
 
-  _body: Promise<Buffer> | Buffer | null = null;
+  _body: Promise<ArrayBuffer> | ArrayBuffer | null = null;
+  _size: number | null = null;
 
   constructor(request: Request, response: FetchResponse, took: number = 0) {
     this.fetchResponse = response;
@@ -22,7 +22,7 @@ export class Response {
     });
   }
 
-  get body(): NodeJS.ReadableStream | null {
+  get body() {
     return this.fetchResponse.body;
   }
 
@@ -43,7 +43,10 @@ export class Response {
   }
 
   get size(): number {
-    return this.fetchResponse.size;
+    if (this._size !== null) {
+      return this._size;
+    }
+    return this._size = parseInt(this.headers.get('content-length') || '0');
   }
 
   get status(): number {
@@ -63,23 +66,25 @@ export class Response {
   }
 
   async arrayBuffer(): Promise<ArrayBuffer> {
-    const {buffer, byteOffset, byteLength} = await this.buffer();
-		return buffer.slice(byteOffset, byteOffset + byteLength);
+    if (this._body) {
+      return this._body;
+    }
+    this._body = this.fetchResponse.arrayBuffer();
+    return this._body = await this._body;
   }
 
+  /*
   async blob(): Promise<Blob> {
     const contentType = this.headers.get(HTTPHeaders.CONTENT_TYPE) || (this.body && (<any> this.body).type) || '';
     const buffer = await this.buffer();
 
     return new Blob([buffer], {type: contentType});
   }
+  */
 
   async buffer(): Promise<Buffer> {
-    if (this._body) {
-      return this._body;
-    }
-    this._body = this.fetchResponse.buffer();
-    return this._body = await this._body;
+    const arrayBuffer = await this.arrayBuffer();
+    return Buffer.from(arrayBuffer);
   }
 
   async json(): Promise<unknown> {

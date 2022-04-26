@@ -1,7 +1,7 @@
 import { Agent } from 'http';
 import { URL } from 'url';
 
-import { Headers, HeadersInit } from 'node-fetch';
+import { Headers, HeadersInit } from 'undici';
 
 import {
   HTTPHeaders,
