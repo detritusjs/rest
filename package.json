@@ -7,7 +7,7 @@
     "detritus-utils": "^0.4.0",
     "undici": "^5.0.0"
   },
-  "description": "some js rest library",
+  "description": "some js rest library that uses undici underneith, requires 16.5 <= Node",
   "devDependencies": {
     "@types/node": "^17.0.27"
   },
@@ -32,5 +32,5 @@
     "prepare": "npm run build"
   },
   "types": "lib/index.d.ts",
-  "version": "0.9.0-beta.1"
+  "version": "0.9.0-beta.2"
 }

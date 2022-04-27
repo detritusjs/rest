@@ -1,9 +1,10 @@
-import { Blob } from 'buffer';
+import { ReadableStream } from 'stream/web'
 import { format as URLFormat, URL } from 'url';
 
 import {
   fetch,
   BodyInit,
+  File,
   FormData,
   Headers,
   HeadersInit,
@@ -28,13 +29,6 @@ import { Response } from './response';
 import { Route } from './route';
 
 
-export type AbortSignal = {
-	readonly aborted: boolean;
-
-	addEventListener: (type: 'abort', listener: (this: AbortSignal) => void) => void;
-	removeEventListener: (type: 'abort', listener: (this: AbortSignal) => void) => void;
-};
-
 export interface RequestFile {
   contentType?: string,
   filename?: string,
@@ -58,8 +52,9 @@ export interface RequestOptions {
   timeout?: number,
   url?: string | URL,
 
+  //follow?: number,
+
   credentials?: RequestCredentials,
-  follow?: number,
   headers?: HeadersInit | Record<string, string | undefined>,
   integrity?: string,
   keepalive?: boolean,
@@ -72,12 +67,14 @@ export interface RequestOptions {
   window?: null,
 }
 
-export class Request extends FetchRequest {
+export class Request {
   declare clone: () => Request;
 
   readonly controller?: AbortController;
+  readonly options: RequestInit;
   readonly route: Route | null;
   readonly timeout?: number;
+  readonly url: URL;
 
   constructor(
     info: string | URL | RequestOptions | Request,
@@ -146,8 +143,9 @@ export class Request extends FetchRequest {
       if (init.files && init.files.length) {
         for (let i = 0; i < init.files.length; i++) {
           const file = init.files[i];
-          const blob = new Blob([file.value], (file.contentType) ? {type: file.contentType} : undefined);
-          body.append(file.key || `file[${i}]`, blob, file.filename);
+          // use File object instead of Blob since undici loses the contentType <https://github.com/nodejs/undici/blob/main/lib/fetch/formdata.js#L246>
+          const blob = new File([file.value], file.filename || `blob-${i}`, (file.contentType) ? {type: file.contentType} : undefined);
+          body.append(file.key || `file[${i}]`, blob);
         }
       }
       if (init.body !== undefined && init.body !== null && init.body !== body) {
@@ -166,10 +164,26 @@ export class Request extends FetchRequest {
           } else {
             // If an object is passed in as the body with files, but multipart isn't true or jsonify is false, encode it to json
             const key = 'payload_json';
+            //const blob = new Blob([JSON.stringify(init.body)], {type: ContentTypes.APPLICATION_JSON});
             body.append(key, JSON.stringify(init.body));
           }
         }
       }
+
+      // we will cache the body so we can reuse this request object, must extract the body
+      const { extractBody } = require('undici/lib/fetch/body');
+      const extracted = extractBody(body);
+      body = extracted[0]
+      headers.set('content-type', extracted[1]);
+      /*
+      replace boundary
+      // [ body, contentType ] = extractBody()
+      // have to somehow read {stream, source, length}
+      // boundary = '--' + contentType.split('boundary=').pop()!;
+      // boundaryReplacement = boundary.replace('formdata-undici', 'Detritus')
+      // boundary1 = boundary + '\r\nContent-Disposition: form-data';
+      // boundary2 = '\r\n' + boundary + '--';
+      */
     } else if (init.body !== undefined) {
       if (init.jsonify) {
         headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
@@ -186,11 +200,33 @@ export class Request extends FetchRequest {
       controller = new AbortController();
       init.signal = controller.signal;
     }
-
-    super(url as unknown as string, init as RequestInit);
+  
     this.controller = controller;
     this.route = route;
+    this.url = url;
     this.timeout = init.timeout;
+
+    this.options = {
+      body: init.body,
+      credentials: init.credentials,
+      headers: init.headers,
+      integrity: init.integrity,
+      keepalive: init.keepalive,
+      method: init.method,
+      mode: init.mode,
+      redirect: init.redirect,
+      referrer: init.referrer,
+      referrerPolicy: init.referrerPolicy as ReferrerPolicy | undefined,
+      signal: init.signal as AbortSignal | undefined,
+    };
+  }
+
+  get headers() {
+    return this.options.headers!;
+  }
+
+  get method(): string {
+    return this.options.method!;
   }
 
   get parsedUrl(): URL {
@@ -204,6 +240,23 @@ export class Request extends FetchRequest {
   async send() {
     const now = Date.now();
 
+    if (this.options.body) {
+      const body = this.options.body as any;
+      if (typeof(body) === 'object' && body.stream instanceof ReadableStream) {
+        const reader = body.stream.getReader();
+        const buffers = [];
+        let done = false;
+        while (!done) {
+          const result = await reader.read();
+          done = result.done;
+          if (result.value) {
+            buffers.push(result.value);
+          }
+        }
+        Object.assign(this.options, {body: Buffer.concat(buffers)});
+      }
+    }
+
     let timeout: Timers.Timeout | undefined;
     if (this.timeout && this.controller) {
       timeout = new Timers.Timeout();
@@ -214,7 +267,7 @@ export class Request extends FetchRequest {
       });
     }
 
-    const response = await fetch(this.url, this as RequestInit);
+    const response = await fetch(this.url, this.options as RequestInit);
     if (timeout) {
       timeout.stop();
     }
@@ -227,7 +280,7 @@ export class Request extends FetchRequest {
 }
 
 
-(Request as any).prototype.clone = function() {return new Request(this);}
+(Request as any).prototype.clone = function() {return new Request(this.url, {...this, ...this.options});}
 
 
 export function appendQuery(
