@@ -192,8 +192,6 @@ export class Request {
         body = init.body;
       }
     }
-    init.body = body;
-    init.headers = headers;
 
     let controller: AbortController | undefined;
     if (init.timeout) {
@@ -207,9 +205,9 @@ export class Request {
     this.timeout = init.timeout;
 
     this.options = {
-      body: init.body,
+      body,
       credentials: init.credentials,
-      headers: init.headers,
+      headers,
       integrity: init.integrity,
       keepalive: init.keepalive,
       method: init.method,
@@ -221,8 +219,8 @@ export class Request {
     };
   }
 
-  get headers() {
-    return this.options.headers!;
+  get headers(): Headers {
+    return this.options.headers as Headers;
   }
 
   get method(): string {
