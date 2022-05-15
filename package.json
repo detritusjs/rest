@@ -5,11 +5,11 @@
   },
   "dependencies": {
     "detritus-utils": "^0.4.0",
-    "undici": "^5.1.1"
+    "undici": "^5.2.0"
   },
   "description": "some js rest library that uses undici underneith, requires 16.5 <= Node",
   "devDependencies": {
-    "@types/node": "^17.0.31"
+    "@types/node": "^17.0.33"
   },
   "files": [
     "lib/**/*"
@@ -32,5 +32,5 @@
     "prepare": "npm run build"
   },
   "types": "lib/index.d.ts",
-  "version": "0.9.0-beta.4"
+  "version": "0.9.0-beta.5"
 }

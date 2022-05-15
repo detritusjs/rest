@@ -145,7 +145,7 @@ export class Request {
           const file = init.files[i];
           // use File object instead of Blob since undici loses the contentType <https://github.com/nodejs/undici/blob/main/lib/fetch/formdata.js#L246>
           const blob = new File([file.value], file.filename || `blob-${i}`, (file.contentType) ? {type: file.contentType} : undefined);
-          body.append(file.key || `file[${i}]`, blob);
+          body.append(file.key || `files[${i}]`, blob);
         }
       }
       if (init.body !== undefined && init.body !== null && init.body !== body) {
