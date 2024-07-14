@@ -12,6 +12,7 @@ import {
   RequestInit,
   RequestRedirect,
 } from 'undici';
+import { extractBody } from 'undici/lib/web/fetch/body';
 
 import { Timers } from 'detritus-utils';
 
@@ -175,7 +176,6 @@ export class Request {
       }
 
       // we will cache the body so we can reuse this request object, must extract the body
-      const { extractBody } = require('undici/lib/fetch/body');
       const extracted = extractBody(body);
       body = extracted[0]
       headers.set('content-type', extracted[1]);

@@ -29,7 +29,7 @@
     "prepare": "npm run build"
   },
   "types": "lib/index.d.ts",
-  "version": "0.9.0-beta.12",
+  "version": "0.9.0-beta.13",
   "devDependencies": {
     "@types/node": "^20.14.10"
   }
