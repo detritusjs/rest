@@ -159,6 +159,10 @@ export class Request {
         } else {
           if ((init.multipart || !init.jsonify) && typeof(init.body) === 'object') {
             for (let key in init.body) {
+              if (init.body[key] === undefined) {
+                continue;
+              }
+
               body.append(key, init.body[key]);
             }
           } else {
