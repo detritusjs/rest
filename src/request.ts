@@ -1,10 +1,10 @@
+import { File } from 'node:buffer';
 import { ReadableStream } from 'stream/web'
 import { format as URLFormat, URL } from 'url';
 
 import {
   fetch,
   BodyInit,
-  File,
   FormData,
   Headers,
   HeadersInit,
