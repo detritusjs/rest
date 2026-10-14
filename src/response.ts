@@ -13,16 +13,25 @@ export class Response {
   _bodyStream: FetchResponse['body'] = null;
   _bodyUsed: boolean = false;
   _size: number | null = null;
+  // stops the request's timeout, it covers reading the body too, shared with clones
+  _stopTimeout: () => void;
 
-  constructor(request: Request, response: FetchResponse, took: number = 0) {
+  constructor(
+    request: Request,
+    response: FetchResponse,
+    took: number = 0,
+    stopTimeout: () => void = () => {},
+  ) {
     this.fetchResponse = response;
     this.request = request;
     this.took = took;
+    this._stopTimeout = stopTimeout;
 
     Object.defineProperties(this, {
       _body: {enumerable: false},
       _bodyStream: {enumerable: false},
       _bodyUsed: {enumerable: false},
+      _stopTimeout: {enumerable: false},
     });
   }
 
@@ -89,17 +98,13 @@ export class Response {
       return this._body;
     }
     this._body = this.fetchResponse.arrayBuffer();
-    return this._body = await this._body;
+    try {
+      return this._body = await this._body;
+    } finally {
+      // the body is read (or failed to), the timeout is done either way
+      this._stopTimeout();
+    }
   }
-
-  /*
-  async blob(): Promise<Blob> {
-    const contentType = this.headers.get(HTTPHeaders.CONTENT_TYPE) || (this.body && (<any> this.body).type) || '';
-    const buffer = await this.buffer();
-
-    return new Blob([buffer], {type: contentType});
-  }
-  */
 
   async buffer(): Promise<Buffer> {
     const arrayBuffer = await this.arrayBuffer();
@@ -122,11 +127,13 @@ export class Response {
   clone(): Response {
     // once the body is read (or being read) the fetch response can't be cloned, reuse the cached body instead
     const fetchResponse = (this._body === null) ? this.fetchResponse.clone() : this.fetchResponse;
-    const response = new Response(this.request, fetchResponse, this.took);
+    const response = new Response(this.request, fetchResponse, this.took, this._stopTimeout);
     if (this._body instanceof ArrayBuffer) {
       response._body = this._body.slice(0);
     } else if (this._body) {
-      response._body = this._body.then((body) => response._body = body.slice(0));
+      const body = response._body = this._body.then((body) => response._body = body.slice(0));
+      // the original's read failing would otherwise be an unhandled rejection if the clone is never read
+      body.catch(() => {});
     }
     response._size = this._size;
     return response;

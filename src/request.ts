@@ -64,8 +64,6 @@ export interface RequestOptions {
   timeout?: number,
   url?: string | URL,
 
-  //follow?: number,
-
   credentials?: RequestCredentials,
   headers?: HeadersInit | Record<string, string | undefined>,
   integrity?: string,
@@ -202,20 +200,29 @@ export class Request {
       body = (init.body instanceof FormData) ? init.body : createFormData(init.body);
       headers.delete(HTTPHeaders.CONTENT_TYPE);
     } else if (((init.body !== undefined && init.body !== null) && init.multipart) || (init.files && init.files.length)) {
-      // convert the body to form-data if `init.body` is non-null and multipart is true OR if theres any files passed in
       // copy a caller's form-data so we don't append the files onto it
       body = createFormData((isFormData(init.body)) ? init.body : undefined);
       if (init.files && init.files.length) {
+        const streams: Array<PendingFileStream> = [];
         for (let i = 0; i < init.files.length; i++) {
           const file = init.files[i];
+          const key = file.key || `files[${i}]`;
+          const filename = file.filename || `blob-${i}`;
+          if (isStream(file.value)) {
+            // `File` would turn a stream into the text "[object Object]", streams get read in and appended on the first send
+            streams.push({contentType: file.contentType, filename, key, stream: file.value});
+            continue;
+          }
           // use File object instead of Blob since undici loses the contentType <https://github.com/nodejs/undici/blob/main/lib/fetch/formdata.js#L246>
-          const blob = new File([file.value], file.filename || `blob-${i}`, (file.contentType) ? {type: file.contentType} : undefined);
-          body.append(file.key || `files[${i}]`, blob);
+          const blob = new File([file.value], filename, (file.contentType) ? {type: file.contentType} : undefined);
+          body.append(key, blob);
+        }
+        if (streams.length) {
+          pendingFileStreams.set(body, streams);
         }
       }
       if (init.body !== undefined && init.body !== null && !isFormData(init.body)) {
         if (isURLSearchParameters(init.body)) {
-          // go through the keys and add it to the form-data
           for (let [key, value] of init.body) {
             body.append(key, value);
           }
@@ -225,7 +232,7 @@ export class Request {
           body.append(`files[${index}]`, blob);
         } else if (isStream(init.body)) {
           // the body has to be extracted synchronously here, a stream can't be read into a part
-          throw new Error('Stream bodies cannot be sent as multipart, pass the data through `files` instead.');
+          throw new Error('Stream bodies cannot be sent as multipart, pass the stream as a file `value` in `files` instead.');
         } else {
           if ((init.multipart || !init.jsonify) && typeof(init.body) === 'object') {
             for (let key in init.body) {
@@ -236,27 +243,20 @@ export class Request {
               body.append(key, init.body[key]);
             }
           } else {
-            // If an object is passed in as the body with files, but multipart isn't true or jsonify is false, encode it to json
+            // with files, a non-multipart jsonified object (or a non-object body) gets sent as json in `payload_json`
             const key = 'payload_json';
-            //const blob = new Blob([JSON.stringify(init.body)], {type: ContentTypes.APPLICATION_JSON});
             body.append(key, JSON.stringify(init.body));
           }
         }
       }
 
       // we will cache the body so we can reuse this request object, must extract the body
-      const extracted = extractBody(body);
-      body = extracted[0]
-      headers.set('content-type', extracted[1]);
-      /*
-      replace boundary
-      // [ body, contentType ] = extractBody()
-      // have to somehow read {stream, source, length}
-      // boundary = '--' + contentType.split('boundary=').pop()!;
-      // boundaryReplacement = boundary.replace('formdata-undici', 'Detritus')
-      // boundary1 = boundary + '\r\nContent-Disposition: form-data';
-      // boundary2 = '\r\n' + boundary + '--';
-      */
+      // with file streams it gets extracted on the first send instead, once they're read in and appended
+      if (!pendingFileStreams.has(body)) {
+        const extracted = extractBody(body);
+        body = extracted[0]
+        headers.set('content-type', extracted[1]);
+      }
     } else if (init.body !== undefined && init.body !== null) {
       if (isStream(init.body)) {
         // fetch reads streams as-is but requires `duplex` for them, note a stream can only be sent once
@@ -319,12 +319,31 @@ export class Request {
 
     if (this.options.body) {
       const body = this.options.body as any;
-      if (typeof(body) === 'object' && body.stream instanceof ReadableStream) {
+      const streams = pendingFileStreams.get(body);
+      if (streams) {
+        // shared with clones and concurrent sends, each stream can only be read once
+        let extracted = extractedFormData.get(body);
+        if (!extracted) {
+          extracted = (async () => {
+            for (let file of streams) {
+              const data = await readAnyStream(file.stream);
+              body.append(file.key, new File([data as Uint8Array<ArrayBuffer>], file.filename, (file.contentType) ? {type: file.contentType} : undefined));
+            }
+            return extractBody(body) as [any, string];
+          })();
+          extractedFormData.set(body, extracted);
+        }
+        const [ extractedBody, contentType ] = await extracted;
+        Object.assign(this.options, {body: extractedBody});
+        this.headers.set('content-type', contentType);
+      }
+      const extractedBody = this.options.body as any;
+      if (typeof(extractedBody) === 'object' && extractedBody.stream instanceof ReadableStream) {
         // the extracted body is shared with clones and concurrent sends, so only read its stream once
-        let buffered = bufferedBodies.get(body);
+        let buffered = bufferedBodies.get(extractedBody);
         if (!buffered) {
-          buffered = readStream(body.stream);
-          bufferedBodies.set(body, buffered);
+          buffered = readStream(extractedBody.stream);
+          bufferedBodies.set(extractedBody, buffered);
         }
         Object.assign(this.options, {body: await buffered});
       }
@@ -351,14 +370,30 @@ export class Request {
       });
     }
 
-    try {
-      const response = await fetch(this.url, options);
-      return new Response(this, response, Date.now() - now);
-    } finally {
+    // fetch resolves once the headers arrive, the timeout keeps running until the body is read so a stalled body can't hang
+    // `stop` is shared with the response (and its clones), stopping an already stopped timeout does nothing
+    const stop = () => {
       if (timeout) {
         timeout.stop();
       }
+    };
+
+    let response: Awaited<ReturnType<typeof fetch>>;
+    try {
+      response = await fetch(this.url, options);
+    } catch (error) {
+      stop();
+      throw error;
     }
+
+    if (response.body === null) {
+      stop();
+    } else if (timeout) {
+      // a response whose body is never read shouldn't keep the process alive, if it fires the abort just cancels the unread body
+      // a body that is being read keeps the socket (and so the process) alive, so a stalled read still times out
+      timeout.unref();
+    }
+    return new Response(this, response, Date.now() - now, stop);
   }
 
   toString(): string {
@@ -373,6 +408,29 @@ export class Request {
 
 
 const bufferedBodies = new WeakMap<object, Promise<Buffer>>();
+
+interface PendingFileStream {
+  contentType?: string,
+  filename: string,
+  key: string,
+  stream: any,
+}
+
+// form-data -> the file streams that still have to be read in and appended to it
+const pendingFileStreams = new WeakMap<object, Array<PendingFileStream>>();
+// form-data -> its extracted body once the streams are in
+const extractedFormData = new WeakMap<object, Promise<[any, string]>>();
+
+async function readAnyStream(stream: any): Promise<Buffer> {
+  if (typeof(stream.getReader) === 'function') {
+    return readStream(stream);
+  }
+  const buffers: Array<Buffer> = [];
+  for await (let chunk of stream) {
+    buffers.push((typeof(chunk) === 'string') ? Buffer.from(chunk) : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+  }
+  return Buffer.concat(buffers);
+}
 
 async function readStream(stream: ReadableStream): Promise<Buffer> {
   const reader = stream.getReader();
@@ -473,7 +531,6 @@ export function createHeaders(
   if (old instanceof Headers || (old && typeof((old as any)[Symbol.iterator]) === 'function')) {
     return new Headers(old as HeadersInit);
   } else if (old) {
-    // go through and pick out the undefined
     const headers = new Headers();
     for (let key in old) {
       const value = (old as any)[key];
