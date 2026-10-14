@@ -1,20 +1,19 @@
-const DetritusRest = require('../lib');
-// const FormData = require('form-data');
+import * as DetritusRest from '../../lib';
 
 (async () => {
   const client = new DetritusRest.Client();
 
-  /*
-  const body = new FormData();
-  body.add('some', 'multipart data');
-  */
   try {
     const response = await client.request({
-      body: {
-        some: 'multipart data',
-      },
+      files: [
+        {
+          contentType: 'text/plain',
+          key: 'some-field-name',
+          filename: 'file-name.txt',
+          value: 'file-data-aaaaaaaaaaaaaaa',
+        },
+      ],
       method: 'post',
-      multipart: true,
       url: 'https://nghttp2.org/httpbin/post',
     });
     const body = await response.json();

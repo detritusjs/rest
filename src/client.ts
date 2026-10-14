@@ -1,14 +1,14 @@
 import { Agent } from 'http';
 import { URL } from 'url';
 
-import { Headers, HeadersInit } from 'undici';
+import { Dispatcher, Headers, HeadersInit } from 'undici';
 
 import {
   HTTPHeaders,
   HTTPMethods,
   Package,
 } from './constants';
-import { createHeaders, Request, RequestOptions } from './request';
+import { createHeaders, mergeRequestOptions, Request, RequestDispatcher, RequestOptions } from './request';
 import { Response } from './response';
 
 
@@ -19,20 +19,24 @@ const defaultClientOptions = Object.freeze({
 });
 
 export interface ClientOptions {
-  agent?: Agent | ((parsedUrl: URL) => Agent),
+  // deprecated alias of `dispatcher`, only undici dispatchers are used (an `http.Agent` is ignored by fetch)
+  agent?: Dispatcher | Agent | ((parsedUrl: URL) => Dispatcher | Agent),
   baseUrl?: string | URL,
+  dispatcher?: RequestDispatcher,
   headers?: HeadersInit | Record<string, string | undefined>,
 }
 
 export class Client {
-  agent?: Agent | ((parsedUrl: URL) => Agent);
+  agent?: Dispatcher | Agent | ((parsedUrl: URL) => Dispatcher | Agent);
   baseUrl: string | URL;
+  dispatcher?: RequestDispatcher;
   headers: Headers;
 
   constructor(options?: ClientOptions) {
     options = Object.assign({}, defaultClientOptions, options);
 
     this.agent = options.agent;
+    this.dispatcher = options.dispatcher;
 
     this.baseUrl = '';
     if (options.baseUrl) {
@@ -53,19 +57,20 @@ export class Client {
   }
 
   createRequest(
-    info: string | URL | RequestOptions,
+    info: string | URL | RequestOptions | Request,
     init?: RequestOptions,
   ): Request {
-    // inject base options from the client here
-    init = Object.assign({
-      agent: this.agent,
-    }, init);
+    if (info instanceof Request) {
+      // already built, spreading it would re-append the route path and drop the encoded body
+      return new Request(info, init);
+    }
 
     let url: string | URL;
     if (typeof(info) === 'string' || info instanceof URL) {
       url = info;
+      init = Object.assign({}, init);
     } else {
-      init = Object.assign({}, info, init);
+      init = mergeRequestOptions(info, init);
       if (init.url || (this.baseUrl && (init.path || (init.route && init.route.path)))) {
         url = init.url || this.baseUrl;
       } else {
@@ -75,6 +80,11 @@ export class Client {
           throw new Error('A URL is required if there is no base URL');
         }
       }
+    }
+
+    // inject base options from the client here, after merging so the request's own dispatcher/agent wins
+    if (init.dispatcher === undefined && init.agent === undefined) {
+      init.dispatcher = (this.dispatcher !== undefined) ? this.dispatcher : this.agent as RequestDispatcher | undefined;
     }
 
     if (init.headers) {
@@ -93,7 +103,7 @@ export class Client {
   }
 
   async request(
-    info: string | URL | RequestOptions,
+    info: string | URL | RequestOptions | Request,
     init?: RequestOptions,
   ): Promise<Response> {
     const request = this.createRequest(info, init);

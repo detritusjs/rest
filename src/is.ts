@@ -7,6 +7,7 @@ const NAME = Symbol.toStringTag;
 
 export function isBlob(object: any): boolean {
 	return (
+		object !== null &&
 		typeof object === 'object' &&
 		typeof object.arrayBuffer === 'function' &&
 		typeof object.type === 'string' &&
@@ -19,6 +20,7 @@ export function isBlob(object: any): boolean {
 
 export function isFormData(object: any): boolean {
 	return (
+		object !== null &&
 		typeof object === 'object' &&
 		typeof object.append === 'function' &&
 		typeof object.set === 'function' &&
@@ -36,6 +38,7 @@ export function isFormData(object: any): boolean {
 
 export function isURLSearchParameters(object: any): boolean {
 	return (
+		object !== null &&
 		typeof object === 'object' &&
 		typeof object.append === 'function' &&
 		typeof object.delete === 'function' &&
@@ -45,5 +48,31 @@ export function isURLSearchParameters(object: any): boolean {
 		typeof object.set === 'function' &&
 		typeof object.sort === 'function' &&
 		object[NAME] === 'URLSearchParams'
+	);
+};
+
+
+export function isArrayBuffer(object: any): boolean {
+	return (
+		object !== null &&
+		typeof object === 'object' &&
+		/^(Shared)?ArrayBuffer$/.test(object[NAME])
+	);
+};
+
+
+export function isArrayBufferView(object: any): boolean {
+	return ArrayBuffer.isView(object);
+};
+
+
+export function isStream(object: any): boolean {
+	return (
+		object !== null &&
+		typeof object === 'object' &&
+		(
+			typeof object.getReader === 'function' ||
+			(typeof object.pipe === 'function' && typeof object[Symbol.asyncIterator] === 'function')
+		)
 	);
 };

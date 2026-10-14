@@ -1,4 +1,4 @@
-const DetritusRest = require('../lib');
+const DetritusRest = require('../../lib');
 
 (async () => {
   const client = new DetritusRest.Client({
@@ -7,16 +7,10 @@ const DetritusRest = require('../lib');
 
   try {
     const response = await client.request({
-      route: {
-        method: 'get',
-        path: '/httpbin/:someVariable',
-        params: {
-          someVariable: 'get',
-        },
-      },
+      path: '/httpbin/get',
     });
     const body = await response.json();
-    console.log(response, body);
+    console.log(body);
   } catch(error) {
     console.error(error);
   }

@@ -1,4 +1,4 @@
-const DetritusRest = require('../lib');
+const DetritusRest = require('../../lib');
 
 (async () => {
   const client = new DetritusRest.Client();

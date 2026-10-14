@@ -1,4 +1,4 @@
-const DetritusRest = require('../lib');
+import * as DetritusRest from '../../lib';
 
 (async () => {
   const client = new DetritusRest.Client({

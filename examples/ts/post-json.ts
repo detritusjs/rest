@@ -1,12 +1,15 @@
-const DetritusRest = require('../lib');
+import * as DetritusRest from '../../lib';
 
 (async () => {
   const client = new DetritusRest.Client();
 
   try {
     const response = await client.request({
-      method: 'delete',
-      url: 'https://nghttp2.org/httpbin/delete',
+      body: {
+        some: 'json',
+      },
+      method: 'post',
+      url: 'https://nghttp2.org/httpbin/post',
     });
     const body = await response.json();
     console.log(body);

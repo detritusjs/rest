@@ -10,6 +10,8 @@ export class Response {
   readonly took: number;
 
   _body: Promise<ArrayBuffer> | ArrayBuffer | null = null;
+  _bodyStream: FetchResponse['body'] = null;
+  _bodyUsed: boolean = false;
   _size: number | null = null;
 
   constructor(request: Request, response: FetchResponse, took: number = 0) {
@@ -19,14 +21,30 @@ export class Response {
 
     Object.defineProperties(this, {
       _body: {enumerable: false},
+      _bodyStream: {enumerable: false},
+      _bodyUsed: {enumerable: false},
     });
   }
 
   get body() {
+    if (this.fetchResponse.body === null) {
+      return null;
+    }
+    if (this._body instanceof ArrayBuffer) {
+      // the underlying stream was already consumed, serve a stream from the cached body (once, like fetch)
+      if (!this._bodyStream) {
+        this._bodyStream = new FetchResponse(this._body).body;
+      }
+      return this._bodyStream;
+    }
     return this.fetchResponse.body;
   }
 
   get bodyUsed(): boolean {
+    if (this._body !== null) {
+      // a clone shares the cached body, so only count reads made through this response
+      return this._bodyUsed;
+    }
     return this.fetchResponse.bodyUsed;
   }
 
@@ -66,6 +84,7 @@ export class Response {
   }
 
   async arrayBuffer(): Promise<ArrayBuffer> {
+    this._bodyUsed = true;
     if (this._body) {
       return this._body;
     }
@@ -96,11 +115,21 @@ export class Response {
   }
 
   async text(): Promise<string> {
-    return (await this.buffer()).toString();
+    // always utf-8 like fetch's text(), strips a leading BOM so json() can parse it
+    return new TextDecoder().decode(await this.arrayBuffer());
   }
 
-  clone() {
-    return new Response(this.request, this.fetchResponse);
+  clone(): Response {
+    // once the body is read (or being read) the fetch response can't be cloned, reuse the cached body instead
+    const fetchResponse = (this._body === null) ? this.fetchResponse.clone() : this.fetchResponse;
+    const response = new Response(this.request, fetchResponse, this.took);
+    if (this._body instanceof ArrayBuffer) {
+      response._body = this._body.slice(0);
+    } else if (this._body) {
+      response._body = this._body.then((body) => response._body = body.slice(0));
+    }
+    response._size = this._size;
+    return response;
   }
 
   toString(): string {
@@ -111,7 +140,6 @@ export class Response {
 
 Object.defineProperties(Response.prototype, {
   arrayBuffer: {enumerable: true},
-  blob: {enumerable: true},
   body: {enumerable: true},
   bodyUsed: {enumerable: true},
   clone: {enumerable: true},
