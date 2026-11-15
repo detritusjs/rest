@@ -1,21 +1,17 @@
-import { File } from 'node:buffer';
 import { Agent as HTTPAgent } from 'http';
 import { Readable } from 'stream';
-import { ReadableStream } from 'stream/web'
 import { format as URLFormat, URL } from 'url';
 
 import {
   fetch,
   BodyInit,
   Dispatcher,
-  FormData,
   Headers,
   HeadersInit,
   Request as FetchRequest,
   RequestInit,
   RequestRedirect,
 } from 'undici';
-import { extractBody } from 'undici/lib/web/fetch/body';
 
 import { Timers } from 'detritus-utils';
 
@@ -32,6 +28,7 @@ import {
   isStream,
   isURLSearchParameters,
 } from './is';
+import { MultipartBody } from './multipart';
 import { Response } from './response';
 import { Route } from './route';
 
@@ -195,30 +192,29 @@ export class Request {
     let body: any;
     let duplex: RequestInit['duplex'];
     if (isFormData(init.body) && !(init.files && init.files.length)) {
+      // any form-data (undici's or node's global one) is sent through our own multipart body, see below
       // a caller-set content-type would be missing the boundary, so remove it
-      // a non-undici form-data (like node's global one) would be sent as `[object FormData]`, so convert it
-      body = (init.body instanceof FormData) ? init.body : createFormData(init.body);
+      body = new MultipartBody();
+      for (let [key, value] of init.body) {
+        body.append(key, value);
+      }
       headers.delete(HTTPHeaders.CONTENT_TYPE);
     } else if (((init.body !== undefined && init.body !== null) && init.multipart) || (init.files && init.files.length)) {
-      // copy a caller's form-data so we don't append the files onto it
-      body = createFormData((isFormData(init.body)) ? init.body : undefined);
+      // our own multipart body instead of a `FormData`, so the files are sent from the caller's buffers and blobs without
+      // being copied (see `MultipartBody`), a caller's form-data entries are copied into it
+      body = new MultipartBody();
+      if (isFormData(init.body)) {
+        for (let [key, value] of init.body) {
+          body.append(key, value);
+        }
+      }
       if (init.files && init.files.length) {
-        const streams: Array<PendingFileStream> = [];
         for (let i = 0; i < init.files.length; i++) {
           const file = init.files[i];
           const key = file.key || `files[${i}]`;
           const filename = file.filename || `blob-${i}`;
-          if (isStream(file.value)) {
-            // `File` would turn a stream into the text "[object Object]", streams get read in and appended on the first send
-            streams.push({contentType: file.contentType, filename, key, stream: file.value});
-            continue;
-          }
-          // use File object instead of Blob since undici loses the contentType <https://github.com/nodejs/undici/blob/main/lib/fetch/formdata.js#L246>
-          const blob = new File([file.value], filename, (file.contentType) ? {type: file.contentType} : undefined);
-          body.append(key, blob);
-        }
-        if (streams.length) {
-          pendingFileStreams.set(body, streams);
+          // a stream is read in on the first send
+          body.appendFile(key, file.value, filename, file.contentType);
         }
       }
       if (init.body !== undefined && init.body !== null && !isFormData(init.body)) {
@@ -228,8 +224,11 @@ export class Request {
           }
         } else if (isBlob(init.body) || isArrayBuffer(init.body) || isArrayBufferView(init.body)) {
           const index = (init.files) ? init.files.length : 0;
-          const blob = (isBlob(init.body)) ? init.body : new File([init.body], `blob-${index}`);
-          body.append(`files[${index}]`, blob);
+          if (isBlob(init.body)) {
+            body.append(`files[${index}]`, init.body);
+          } else {
+            body.appendFile(`files[${index}]`, init.body, `blob-${index}`);
+          }
         } else if (isStream(init.body)) {
           // the body has to be extracted synchronously here, a stream can't be read into a part
           throw new Error('Stream bodies cannot be sent as multipart, pass the stream as a file `value` in `files` instead.');
@@ -250,13 +249,9 @@ export class Request {
         }
       }
 
-      // we will cache the body so we can reuse this request object, must extract the body
-      // with file streams it gets extracted on the first send instead, once they're read in and appended
-      if (!pendingFileStreams.has(body)) {
-        const extracted = extractBody(body);
-        body = extracted[0]
-        headers.set('content-type', extracted[1]);
-      }
+      // `send()` encodes the body again every time (a resend or a clone's send) with a precomputed content-length
+      // a caller-set content-type would be missing the boundary, `send()` sets it
+      headers.delete(HTTPHeaders.CONTENT_TYPE);
     } else if (init.body !== undefined && init.body !== null) {
       if (isStream(init.body)) {
         // fetch reads streams as-is but requires `duplex` for them, note a stream can only be sent once
@@ -317,43 +312,27 @@ export class Request {
   async send() {
     const now = Date.now();
 
-    if (this.options.body) {
-      const body = this.options.body as any;
-      const streams = pendingFileStreams.get(body);
-      if (streams) {
-        // shared with clones and concurrent sends, each stream can only be read once
-        let extracted = extractedFormData.get(body);
-        if (!extracted) {
-          extracted = (async () => {
-            for (let file of streams) {
-              const data = await readAnyStream(file.stream);
-              body.append(file.key, new File([data as Uint8Array<ArrayBuffer>], file.filename, (file.contentType) ? {type: file.contentType} : undefined));
-            }
-            return extractBody(body) as [any, string];
-          })();
-          extractedFormData.set(body, extracted);
-        }
-        const [ extractedBody, contentType ] = await extracted;
-        Object.assign(this.options, {body: extractedBody});
-        this.headers.set('content-type', contentType);
-      }
-      const extractedBody = this.options.body as any;
-      if (typeof(extractedBody) === 'object' && extractedBody.stream instanceof ReadableStream) {
-        // the extracted body is shared with clones and concurrent sends, so only read its stream once
-        let buffered = bufferedBodies.get(extractedBody);
-        if (!buffered) {
-          buffered = readStream(extractedBody.stream);
-          bufferedBodies.set(extractedBody, buffered);
-        }
-        Object.assign(this.options, {body: await buffered});
-      }
-    }
-
     if (this.options.duplex && Readable.isDisturbed(this.options.body as any)) {
       throw new Error('This request\'s stream body was already sent, a stream body can only be sent once. Pass a Buffer to be able to retry.');
     }
 
     const options: RequestInit = Object.assign({}, this.options);
+    if ((options.body as any) instanceof MultipartBody) {
+      const body = options.body as unknown as MultipartBody;
+      // the body is shared with clones and concurrent sends, its streams are read in once
+      await body.resolveStreams();
+
+      // fetch tees a body with a source (form-data, blobs, buffers) to be able to resend it on a redirect, and the branch it
+      // keeps is never read, so it would hold every chunk of the files until the request is done
+      // a stream has no source and isn't teed, so it's encoded again on every send and only its stream is given, the files
+      // are read as the socket drains (a 307/308 redirect fails instead of resending it)
+      const { length, stream } = body.encode();
+      const headers = new Headers(options.headers);
+      headers.set(HTTPHeaders.CONTENT_TYPE, body.contentType);
+      // a stream would be sent chunked otherwise
+      headers.set(HTTPHeaders.CONTENT_LENGTH, String(length));
+      Object.assign(options, {body: stream, duplex: 'half', headers});
+    }
     let timeout: Timers.Timeout | undefined;
     if (this.timeout) {
       // fresh controller per send so a previous timeout doesn't abort a re-send
@@ -407,46 +386,6 @@ export class Request {
 }
 
 
-const bufferedBodies = new WeakMap<object, Promise<Buffer>>();
-
-interface PendingFileStream {
-  contentType?: string,
-  filename: string,
-  key: string,
-  stream: any,
-}
-
-// form-data -> the file streams that still have to be read in and appended to it
-const pendingFileStreams = new WeakMap<object, Array<PendingFileStream>>();
-// form-data -> its extracted body once the streams are in
-const extractedFormData = new WeakMap<object, Promise<[any, string]>>();
-
-async function readAnyStream(stream: any): Promise<Buffer> {
-  if (typeof(stream.getReader) === 'function') {
-    return readStream(stream);
-  }
-  const buffers: Array<Buffer> = [];
-  for await (let chunk of stream) {
-    buffers.push((typeof(chunk) === 'string') ? Buffer.from(chunk) : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-  }
-  return Buffer.concat(buffers);
-}
-
-async function readStream(stream: ReadableStream): Promise<Buffer> {
-  const reader = stream.getReader();
-  const buffers = [];
-  let done = false;
-  while (!done) {
-    const result = await reader.read();
-    done = result.done;
-    if (result.value) {
-      buffers.push(result.value);
-    }
-  }
-  return Buffer.concat(buffers);
-}
-
-
 function resolveDispatcher(
   value: RequestOptions['agent'] | RequestOptions['dispatcher'],
   url: URL,
@@ -470,18 +409,6 @@ function resolveDispatcher(
 
 
 let warnedInvalidDispatcher = false;
-
-
-function createFormData(entries?: Iterable<[string, any]>): FormData {
-  // undici's fetch only recognizes its own form-data, so copy the entries (blobs and files included) into one
-  const formData = new FormData();
-  if (entries) {
-    for (let [key, value] of entries) {
-      formData.append(key, value);
-    }
-  }
-  return formData;
-}
 
 
 /**
