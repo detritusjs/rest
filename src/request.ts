@@ -83,9 +83,13 @@ export class Request {
   readonly timeout?: number;
   readonly url: URL;
 
+  /**
+   * `defaultHeaders` are added to the request's headers when it doesn't have them already (the client's headers)
+   */
   constructor(
     info: string | URL | RequestOptions | Request,
     init?: RequestOptions,
+    defaultHeaders?: Headers,
   ) {
     init = Object.assign({}, init);
 
@@ -109,6 +113,13 @@ export class Request {
       if (init.headers) {
         for (let [key, value] of createHeaders(init.headers)) {
           headers.set(key, value);
+        }
+      }
+      if (defaultHeaders) {
+        for (let [key, value] of defaultHeaders) {
+          if (!headers.has(key)) {
+            headers.set(key, value);
+          }
         }
       }
 
@@ -176,6 +187,9 @@ export class Request {
     if (route) {
       if (url.pathname.endsWith('/') && route.urlPath.startsWith('/')) {
         url.pathname += route.urlPath.slice(1);
+      } else if (route.urlPath && !url.pathname.endsWith('/') && !route.urlPath.startsWith('/')) {
+        // `/api` and `users` would be glued into `/apiusers`
+        url.pathname += '/' + route.urlPath;
       } else {
         url.pathname += route.urlPath;
       }
@@ -188,6 +202,13 @@ export class Request {
     }
 
     const headers = createHeaders(init.headers);
+    if (defaultHeaders) {
+      for (let [key, value] of defaultHeaders) {
+        if (!headers.has(key)) {
+          headers.set(key, value);
+        }
+      }
+    }
 
     let body: any;
     let duplex: RequestInit['duplex'];
@@ -212,7 +233,8 @@ export class Request {
         for (let i = 0; i < init.files.length; i++) {
           const file = init.files[i];
           const key = file.key || `files[${i}]`;
-          const filename = file.filename || `blob-${i}`;
+          // like `FormData`, a `File`'s own name is used if none is given
+          const filename = file.filename || (isBlob(file.value) && file.value.name) || `blob-${i}`;
           // a stream is read in on the first send
           body.appendFile(key, file.value, filename, file.contentType);
         }
@@ -239,12 +261,17 @@ export class Request {
                 continue;
               }
 
-              body.append(key, init.body[key]);
+              body.append(key, toMultipartField(init.body[key]));
             }
           } else {
             // with files, a non-multipart jsonified object (or a non-object body) gets sent as json in `payload_json`
+            // a string that isn't jsonified is already json, so it's sent as is
             const key = 'payload_json';
-            body.append(key, JSON.stringify(init.body));
+            if (!init.jsonify && typeof(init.body) === 'string') {
+              body.append(key, init.body);
+            } else {
+              body.append(key, JSON.stringify(init.body));
+            }
           }
         }
       }
@@ -265,7 +292,10 @@ export class Request {
         !isURLSearchParameters(init.body)
       ) {
         // only plain objects, arrays and primitives are json, fetch sets the content-type for the others
-        headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
+        // a caller-set content-type (like `application/merge-patch+json`) is kept
+        if (!headers.has(HTTPHeaders.CONTENT_TYPE)) {
+          headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
+        }
         body = JSON.stringify(init.body);
       } else {
         body = init.body;
@@ -317,15 +347,16 @@ export class Request {
     }
 
     const options: RequestInit = Object.assign({}, this.options);
+    let multipartBody: MultipartBody | null = null;
     if ((options.body as any) instanceof MultipartBody) {
-      const body = options.body as unknown as MultipartBody;
+      const body = multipartBody = options.body as unknown as MultipartBody;
       // the body is shared with clones and concurrent sends, its streams are read in once
       await body.resolveStreams();
 
       // fetch tees a body with a source (form-data, blobs, buffers) to be able to resend it on a redirect, and the branch it
       // keeps is never read, so it would hold every chunk of the files until the request is done
       // a stream has no source and isn't teed, so it's encoded again on every send and only its stream is given, the files
-      // are read as the socket drains (a 307/308 redirect fails instead of resending it)
+      // are read as the socket drains (fetch can't follow a redirect that keeps the body, so they're followed in `fetchFollow()`)
       const { length, stream } = body.encode();
       const headers = new Headers(options.headers);
       headers.set(HTTPHeaders.CONTENT_TYPE, body.contentType);
@@ -359,7 +390,12 @@ export class Request {
 
     let response: Awaited<ReturnType<typeof fetch>>;
     try {
-      response = await fetch(this.url, options);
+      if (options.duplex && (!options.redirect || options.redirect === 'follow')) {
+        // fetch fails a redirect with a stream body (a bare `fetch failed`) unless it's a 303, so they're followed here
+        response = await fetchFollow(this.url, options, multipartBody);
+      } else {
+        response = await fetch(this.url, options);
+      }
     } catch (error) {
       stop();
       throw error;
@@ -383,6 +419,72 @@ export class Request {
 
 (Request as any).prototype.clone = function(this: Request): Request {
   return new Request(this);
+}
+
+
+// like fetch's limit
+const MAX_REDIRECTS = 20;
+const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
+// removed when a redirect switches to a GET, fetch removes the same ones (and the content-length we set)
+const REQUEST_BODY_HEADERS = ['content-encoding', 'content-language', 'content-location', 'content-type', 'content-length'];
+// removed when a redirect goes to another origin, like undici's fetch
+const CROSS_ORIGIN_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
+
+/**
+ * Follows redirects like fetch for a request with a stream body, which fetch can't resend
+ * A multipart body is encoded again for a redirect that keeps the body (307/308, or a 301/302 that isn't a POST), a stream
+ * body can only be sent once so it throws instead
+ * A 303 (or a 301/302 POST) switches to a GET without a body, like fetch
+ */
+async function fetchFollow(
+  url: URL,
+  options: RequestInit,
+  multipartBody: MultipartBody | null,
+): Promise<Awaited<ReturnType<typeof fetch>>> {
+  options = Object.assign({}, options, {headers: new Headers(options.headers), redirect: 'manual'});
+  for (let redirects = 0; true; redirects++) {
+    const response = await fetch(url, options);
+    const location = response.headers.get('location');
+    if (!REDIRECT_STATUSES.includes(response.status) || location === null) {
+      return response;
+    }
+    // the redirect's own body isn't used
+    if (response.body) {
+      await response.body.cancel().catch(() => {});
+    }
+    if (MAX_REDIRECTS <= redirects) {
+      throw new Error(`Too many redirects, stopped after ${MAX_REDIRECTS} redirects at ${url.href}`);
+    }
+
+    const nextUrl = new URL(location, url);
+    if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
+      throw new Error(`Cannot follow a ${response.status} redirect to ${nextUrl.href}, only http(s) urls can be redirected to.`);
+    }
+
+    const headers = options.headers as Headers;
+    if (nextUrl.origin !== url.origin) {
+      for (let key of CROSS_ORIGIN_HEADERS) {
+        headers.delete(key);
+      }
+    }
+
+    const method = options.method || HTTPMethods.GET;
+    if (
+      (response.status === 303 && method !== HTTPMethods.GET && method !== HTTPMethods.HEAD) ||
+      ((response.status === 301 || response.status === 302) && method === HTTPMethods.POST)
+    ) {
+      for (let key of REQUEST_BODY_HEADERS) {
+        headers.delete(key);
+      }
+      options = Object.assign({}, options, {body: null, duplex: undefined, method: HTTPMethods.GET});
+    } else if (options.body !== null && options.body !== undefined) {
+      if (!multipartBody) {
+        throw new Error(`Cannot follow a ${response.status} redirect to ${nextUrl.href}, the request's stream body can only be sent once. Pass a Buffer to be able to follow it.`);
+      }
+      options = Object.assign({}, options, {body: multipartBody.encode().stream});
+    }
+    url = nextUrl;
+  }
 }
 
 
@@ -444,11 +546,39 @@ export function appendQuery(
       appendQuery(url, key, v);
     }
   } else {
-    if (typeof(value) !== 'string') {
+    if (value instanceof Date) {
+      value = value.toISOString();
+    } else if (isPlainObject(value)) {
+      throw new Error(`Query parameter \`${key}\` cannot be an object, only strings, numbers, booleans, dates and arrays of them.`);
+    } else if (typeof(value) !== 'string') {
       value = String(value);
     }
     url.searchParams.append(key, value);
   }
+}
+
+
+function isPlainObject(value: any): boolean {
+  if (value === null || typeof(value) !== 'object') {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+
+/**
+ * A multipart field's value, a date is sent as its iso string and an object (or an array with objects) as json
+ * Anything else is sent like `FormData` would (a blob as a file, the rest as its string)
+ */
+function toMultipartField(value: any): any {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (isPlainObject(value) || (Array.isArray(value) && value.some((x) => x !== null && typeof(x) === 'object'))) {
+    return JSON.stringify(value);
+  }
+  return value;
 }
 
 

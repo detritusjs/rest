@@ -66,6 +66,11 @@ export class MultipartBody {
    * Any other value is sent as its string's bytes, like a `File` made from it
    */
   appendFile(name: string, value: any, filename: string, contentType?: string): void {
+    if (contentType && /[\r\n]/.test(contentType)) {
+      // it's written into the part's headers as is, a linefeed would inject headers
+      throw new Error('A file\'s content type cannot contain a carriage return or linefeed.');
+    }
+
     if (isStream(value)) {
       this.parts.push({contentType, filename, name, stream: value, value: []});
       return;
@@ -74,6 +79,8 @@ export class MultipartBody {
     let fileValue: MultipartFileValue;
     if (isBlob(value)) {
       fileValue = value;
+      // like `append()`, a blob's own type is used if none is given
+      contentType = contentType || value.type || undefined;
     } else if (isArrayBuffer(value)) {
       fileValue = new Uint8Array(value);
     } else if (isArrayBufferView(value)) {

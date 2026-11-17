@@ -87,19 +87,8 @@ export class Client {
       init.dispatcher = (this.dispatcher !== undefined) ? this.dispatcher : this.agent as RequestDispatcher | undefined;
     }
 
-    if (init.headers) {
-      const headers = createHeaders(init.headers);
-      for (let [key, value] of this.headers) {
-        if (!headers.has(key)) {
-          headers.set(key, value);
-        }
-      }
-      init.headers = headers;
-    } else {
-      init.headers = new Headers(this.headers);
-    }
-
-    return new Request(url, init);
+    // the request copies the caller's headers into its own and adds the client's missing ones, so they're only copied once
+    return new Request(url, init, this.headers);
   }
 
   async request(
