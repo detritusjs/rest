@@ -32,8 +32,7 @@ export function replacePathParameters(
     if (Object.prototype.hasOwnProperty.call(parameters, key) && parameters[key] !== undefined) {
       const value = encodeURIComponent(String(parameters[key]));
       if (DotSegmentRegexp.test(value)) {
-        // a `.` or `..` segment would be normalized away by the url parser and climb out of the path
-        // `%2E` is treated as a dot by the parser too, so the percent itself has to be encoded
+        // a `.` or `..` segment would climb out of the path, and the parser treats `%2E` as a dot too
         return value.replace(/\./g, '%252E');
       }
       return value;

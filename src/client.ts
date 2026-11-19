@@ -19,7 +19,7 @@ const defaultClientOptions = Object.freeze({
 });
 
 export interface ClientOptions {
-  // deprecated alias of `dispatcher`, only undici dispatchers are used (an `http.Agent` is ignored by fetch)
+  // deprecated alias of `dispatcher`, an `http.Agent` is ignored by fetch
   agent?: Dispatcher | Agent | ((parsedUrl: URL) => Dispatcher | Agent),
   baseUrl?: string | URL,
   dispatcher?: RequestDispatcher,
@@ -62,7 +62,11 @@ export class Client {
   ): Request {
     if (info instanceof Request) {
       // already built, spreading it would re-append the route path and drop the encoded body
-      return new Request(info, init);
+      init = Object.assign({}, init);
+      if (init.dispatcher === undefined && init.agent === undefined && !info.options.dispatcher) {
+        init.dispatcher = (this.dispatcher !== undefined) ? this.dispatcher : this.agent as RequestDispatcher | undefined;
+      }
+      return new Request(info, init, this.headers);
     }
 
     let url: string | URL;
@@ -82,12 +86,11 @@ export class Client {
       }
     }
 
-    // inject base options from the client here, after merging so the request's own dispatcher/agent wins
+    // after merging so the request's own dispatcher/agent wins
     if (init.dispatcher === undefined && init.agent === undefined) {
       init.dispatcher = (this.dispatcher !== undefined) ? this.dispatcher : this.agent as RequestDispatcher | undefined;
     }
 
-    // the request copies the caller's headers into its own and adds the client's missing ones, so they're only copied once
     return new Request(url, init, this.headers);
   }
 

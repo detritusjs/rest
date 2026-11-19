@@ -43,7 +43,7 @@ export interface RequestFile {
 export type RequestDispatcher = Dispatcher | ((parsedUrl: URL) => Dispatcher);
 
 export interface RequestOptions {
-  // deprecated alias of `dispatcher`, only undici dispatchers are used (an `http.Agent` is ignored by fetch)
+  // deprecated alias of `dispatcher`, an `http.Agent` is ignored by fetch
   agent?: Dispatcher | HTTPAgent | ((parsedUrl: URL) => Dispatcher | HTTPAgent),
   body?: BodyInit | null | any,
   dispatcher?: RequestDispatcher,
@@ -77,6 +77,7 @@ export interface RequestOptions {
 export class Request {
   declare clone: () => Request;
 
+  // the latest send's timeout controller, only set with a `timeout`
   controller?: AbortController;
   readonly options: RequestInit;
   readonly route: Route | null;
@@ -84,7 +85,7 @@ export class Request {
   readonly url: URL;
 
   /**
-   * `defaultHeaders` are added to the request's headers when it doesn't have them already (the client's headers)
+   * `defaultHeaders` fill in the headers the request doesn't already have
    */
   constructor(
     info: string | URL | RequestOptions | Request,
@@ -94,8 +95,7 @@ export class Request {
     init = Object.assign({}, init);
 
     if (info instanceof Request) {
-      // `info` is already built (route path appended, body encoded), so copy its processed state like `clone()` does
-      // the url, route and body can't be overridden since rebuilding them needs the original options
+      // `info` is already built, rebuilding its url, route or body would need the original options
       for (let key of ['body', 'files', 'jsonify', 'multipart', 'path', 'route', 'url'] as const) {
         if (init[key] !== undefined) {
           throw new Error(`Cannot override \`${key}\` when creating a Request from an existing Request.`);
@@ -213,16 +213,14 @@ export class Request {
     let body: any;
     let duplex: RequestInit['duplex'];
     if (isFormData(init.body) && !(init.files && init.files.length)) {
-      // any form-data (undici's or node's global one) is sent through our own multipart body, see below
-      // a caller-set content-type would be missing the boundary, so remove it
+      // a caller-set content-type would be missing the boundary
       body = new MultipartBody();
       for (let [key, value] of init.body) {
         body.append(key, value);
       }
       headers.delete(HTTPHeaders.CONTENT_TYPE);
     } else if (((init.body !== undefined && init.body !== null) && init.multipart) || (init.files && init.files.length)) {
-      // our own multipart body instead of a `FormData`, so the files are sent from the caller's buffers and blobs without
-      // being copied (see `MultipartBody`), a caller's form-data entries are copied into it
+      // our own multipart body instead of a `FormData`, so files are sent from the caller's buffers without being copied
       body = new MultipartBody();
       if (isFormData(init.body)) {
         for (let [key, value] of init.body) {
@@ -233,7 +231,6 @@ export class Request {
         for (let i = 0; i < init.files.length; i++) {
           const file = init.files[i];
           const key = file.key || `files[${i}]`;
-          // like `FormData`, a `File`'s own name is used if none is given
           const filename = file.filename || (isBlob(file.value) && file.value.name) || `blob-${i}`;
           // a stream is read in on the first send
           body.appendFile(key, file.value, filename, file.contentType);
@@ -252,7 +249,7 @@ export class Request {
             body.appendFile(`files[${index}]`, init.body, `blob-${index}`);
           }
         } else if (isStream(init.body)) {
-          // the body has to be extracted synchronously here, a stream can't be read into a part
+          // the parts are built synchronously here
           throw new Error('Stream bodies cannot be sent as multipart, pass the stream as a file `value` in `files` instead.');
         } else {
           if ((init.multipart || !init.jsonify) && typeof(init.body) === 'object') {
@@ -264,8 +261,7 @@ export class Request {
               body.append(key, toMultipartField(init.body[key]));
             }
           } else {
-            // with files, a non-multipart jsonified object (or a non-object body) gets sent as json in `payload_json`
-            // a string that isn't jsonified is already json, so it's sent as is
+            // a string that isn't jsonified is already json
             const key = 'payload_json';
             if (!init.jsonify && typeof(init.body) === 'string') {
               body.append(key, init.body);
@@ -276,12 +272,11 @@ export class Request {
         }
       }
 
-      // `send()` encodes the body again every time (a resend or a clone's send) with a precomputed content-length
-      // a caller-set content-type would be missing the boundary, `send()` sets it
+      // `send()` sets the content-type with the boundary
       headers.delete(HTTPHeaders.CONTENT_TYPE);
     } else if (init.body !== undefined && init.body !== null) {
       if (isStream(init.body)) {
-        // fetch reads streams as-is but requires `duplex` for them, note a stream can only be sent once
+        // fetch requires `duplex` for a stream body
         body = init.body;
         duplex = 'half';
       } else if (
@@ -291,7 +286,6 @@ export class Request {
         !isArrayBufferView(init.body) &&
         !isURLSearchParameters(init.body)
       ) {
-        // only plain objects, arrays and primitives are json, fetch sets the content-type for the others
         // a caller-set content-type (like `application/merge-patch+json`) is kept
         if (!headers.has(HTTPHeaders.CONTENT_TYPE)) {
           headers.set(HTTPHeaders.CONTENT_TYPE, ContentTypes.APPLICATION_JSON);
@@ -339,31 +333,25 @@ export class Request {
     return new URL(url);
   }
 
+  /**
+   * Can be called again to resend, except with a stream body which can only be sent once
+   */
   async send() {
     const now = Date.now();
 
-    if (this.options.duplex && Readable.isDisturbed(this.options.body as any)) {
-      throw new Error('This request\'s stream body was already sent, a stream body can only be sent once. Pass a Buffer to be able to retry.');
+    // claimed while sending so a concurrent send can't split the stream between both requests
+    const streamBody = (this.options.duplex) ? this.options.body as any : null;
+    if (streamBody) {
+      if (sendingStreamBodies.has(streamBody)) {
+        throw new Error('This request\'s stream body is being sent by another send, a stream body can only be sent once. Pass a Buffer to be able to send it concurrently.');
+      }
+      if (Readable.isDisturbed(streamBody)) {
+        throw new Error('This request\'s stream body was already sent, a stream body can only be sent once. Pass a Buffer to be able to retry.');
+      }
+      sendingStreamBodies.add(streamBody);
     }
 
     const options: RequestInit = Object.assign({}, this.options);
-    let multipartBody: MultipartBody | null = null;
-    if ((options.body as any) instanceof MultipartBody) {
-      const body = multipartBody = options.body as unknown as MultipartBody;
-      // the body is shared with clones and concurrent sends, its streams are read in once
-      await body.resolveStreams();
-
-      // fetch tees a body with a source (form-data, blobs, buffers) to be able to resend it on a redirect, and the branch it
-      // keeps is never read, so it would hold every chunk of the files until the request is done
-      // a stream has no source and isn't teed, so it's encoded again on every send and only its stream is given, the files
-      // are read as the socket drains (fetch can't follow a redirect that keeps the body, so they're followed in `fetchFollow()`)
-      const { length, stream } = body.encode();
-      const headers = new Headers(options.headers);
-      headers.set(HTTPHeaders.CONTENT_TYPE, body.contentType);
-      // a stream would be sent chunked otherwise
-      headers.set(HTTPHeaders.CONTENT_LENGTH, String(length));
-      Object.assign(options, {body: stream, duplex: 'half', headers});
-    }
     let timeout: Timers.Timeout | undefined;
     if (this.timeout) {
       // fresh controller per send so a previous timeout doesn't abort a re-send
@@ -375,13 +363,12 @@ export class Request {
       }
       timeout = new Timers.Timeout();
       timeout.start(this.timeout, () => {
-        // abort with an error so fetch rejects with an Error object instead of a string
+        // so fetch rejects with an Error instead of a string
         controller.abort(new DOMException(`Request took longer than ${this.timeout}ms`, 'TimeoutError'));
       });
     }
 
-    // fetch resolves once the headers arrive, the timeout keeps running until the body is read so a stalled body can't hang
-    // `stop` is shared with the response (and its clones), stopping an already stopped timeout does nothing
+    // the timeout keeps running until the body is read so a stalled body can't hang
     const stop = () => {
       if (timeout) {
         timeout.stop();
@@ -389,26 +376,48 @@ export class Request {
     };
 
     let response: Awaited<ReturnType<typeof fetch>>;
+    let redirected = false;
     try {
+      let multipartBody: MultipartBody | null = null;
+      if ((options.body as any) instanceof MultipartBody) {
+        const body = multipartBody = options.body as unknown as MultipartBody;
+        // shared with clones and concurrent sends, its streams are read in once
+        await untilAborted(body.resolveStreams(), options.signal);
+
+        // sent as a bare stream, fetch would tee a sourced body and hold every file chunk until the request is done
+        const { length, stream } = body.encode();
+        const headers = new Headers(options.headers);
+        headers.set(HTTPHeaders.CONTENT_TYPE, body.contentType);
+        // a stream would be sent chunked otherwise
+        headers.set(HTTPHeaders.CONTENT_LENGTH, String(length));
+        Object.assign(options, {body: stream, duplex: 'half', headers});
+      }
+
       if (options.duplex && (!options.redirect || options.redirect === 'follow')) {
-        // fetch fails a redirect with a stream body (a bare `fetch failed`) unless it's a 303, so they're followed here
-        response = await fetchFollow(this.url, options, multipartBody);
+        // fetch fails a redirect with a stream body unless it's a 303
+        ({ redirected, response } = await fetchFollow(this.url, options, multipartBody));
       } else {
         response = await fetch(this.url, options);
       }
     } catch (error) {
       stop();
       throw error;
+    } finally {
+      if (streamBody) {
+        // if fetch read any of it, it's disturbed and can't be resent anyways
+        sendingStreamBodies.delete(streamBody);
+      }
     }
 
     if (response.body === null) {
       stop();
     } else if (timeout) {
-      // a response whose body is never read shouldn't keep the process alive, if it fires the abort just cancels the unread body
-      // a body that is being read keeps the socket (and so the process) alive, so a stalled read still times out
+      // an unread body shouldn't keep the process alive, a body being read keeps the socket alive anyways
       timeout.unref();
     }
-    return new Response(this, response, Date.now() - now, stop);
+    const result = new Response(this, response, Date.now() - now, stop);
+    result._redirected = redirected;
+    return result;
   }
 
   toString(): string {
@@ -425,30 +434,28 @@ export class Request {
 // like fetch's limit
 const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
-// removed when a redirect switches to a GET, fetch removes the same ones (and the content-length we set)
+// removed when a redirect switches to a GET, like fetch
 const REQUEST_BODY_HEADERS = ['content-encoding', 'content-language', 'content-location', 'content-type', 'content-length'];
 // removed when a redirect goes to another origin, like undici's fetch
 const CROSS_ORIGIN_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
 
 /**
- * Follows redirects like fetch for a request with a stream body, which fetch can't resend
- * A multipart body is encoded again for a redirect that keeps the body (307/308, or a 301/302 that isn't a POST), a stream
- * body can only be sent once so it throws instead
- * A 303 (or a 301/302 POST) switches to a GET without a body, like fetch
+ * Follows redirects like fetch for a stream body, which fetch can't resend
+ * A multipart body is encoded again when the redirect keeps the body, a plain stream body throws
  */
 async function fetchFollow(
   url: URL,
   options: RequestInit,
   multipartBody: MultipartBody | null,
-): Promise<Awaited<ReturnType<typeof fetch>>> {
+): Promise<{redirected: boolean, response: Awaited<ReturnType<typeof fetch>>}> {
   options = Object.assign({}, options, {headers: new Headers(options.headers), redirect: 'manual'});
   for (let redirects = 0; true; redirects++) {
     const response = await fetch(url, options);
     const location = response.headers.get('location');
     if (!REDIRECT_STATUSES.includes(response.status) || location === null) {
-      return response;
+      // the last fetch's own `redirected` is always false
+      return {redirected: 0 < redirects, response};
     }
-    // the redirect's own body isn't used
     if (response.body) {
       await response.body.cancel().catch(() => {});
     }
@@ -512,6 +519,38 @@ function resolveDispatcher(
 
 let warnedInvalidDispatcher = false;
 
+// stream bodies with a send in flight, see `send()`
+const sendingStreamBodies = new WeakSet<object>();
+
+
+/**
+ * Rejects with the signal's reason once it aborts, the shared `promise` itself keeps going
+ */
+function untilAborted<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener('abort', onAbort, {once: true});
+    }
+    promise.then((value) => {
+      cleanup();
+      resolve(value);
+    }, (error) => {
+      cleanup();
+      reject(error);
+    });
+  });
+}
+
 
 /**
  * Like `Object.assign({}, info, init)`, but an `undefined` value in `init` doesn't override `info`
@@ -568,8 +607,7 @@ function isPlainObject(value: any): boolean {
 
 
 /**
- * A multipart field's value, a date is sent as its iso string and an object (or an array with objects) as json
- * Anything else is sent like `FormData` would (a blob as a file, the rest as its string)
+ * A date is sent as its iso string and an object (or an array with objects) as json, the rest like `FormData`
  */
 function toMultipartField(value: any): any {
   if (value instanceof Date) {

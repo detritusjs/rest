@@ -4,8 +4,8 @@
     "url": "https://github.com/detritusjs/rest/issues"
   },
   "dependencies": {
-    "detritus-utils": "^0.5.0-beta.6",
-    "undici": "^8.12.2"
+    "detritus-utils": "^0.5.0-beta.7",
+    "undici": "^8.12.4"
   },
   "description": "some js rest library that uses undici underneith, requires 22.19.0 <= Node",
   "engines": {
@@ -32,9 +32,9 @@
     "prepare": "npm run build"
   },
   "types": "lib/index.d.ts",
-  "version": "0.9.0-beta.20",
+  "version": "0.9.0-beta.21",
   "devDependencies": {
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
   }
 }

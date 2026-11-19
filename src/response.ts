@@ -1,3 +1,4 @@
+import { Readable } from 'stream';
 import { ReadableStream } from 'stream/web';
 
 import { Headers, Response as FetchResponse } from 'undici';
@@ -6,18 +7,25 @@ import { HTTPHeaders } from './constants';
 import { Request } from './request';
 
 
+/**
+ * `_body` is null while unread, a promise while `arrayBuffer()` reads it, then the cached ArrayBuffer
+ * The request's timeout keeps running until a read completes
+ */
 export class Response {
   readonly fetchResponse: FetchResponse;
   readonly request: Request;
   readonly took: number;
 
   _body: Promise<ArrayBuffer> | ArrayBuffer | null = null;
+  // a stream of the cached body, given out by `body` once `arrayBuffer()` reads it
   _bodyStream: FetchResponse['body'] = null;
-  // the fetch response's stream, observed so reading it to the end (or cancelling it) stops the timeout
+  // the fetch response's stream, observed so reading it to the end stops the timeout
   _fetchBodyStream: FetchResponse['body'] = null;
   _bodyUsed: boolean = false;
+  // redirects followed by `fetchFollow()`, which the fetch response doesn't know about
+  _redirected: boolean = false;
   _size: number | null = null;
-  // stops the request's timeout, it covers reading the body too, shared with clones
+  // stops the request's timeout, shared with clones
   _stopTimeout: () => void;
 
   constructor(
@@ -36,6 +44,7 @@ export class Response {
       _bodyStream: {enumerable: false},
       _fetchBodyStream: {enumerable: false},
       _bodyUsed: {enumerable: false},
+      _redirected: {enumerable: false},
       _stopTimeout: {enumerable: false},
     });
   }
@@ -44,15 +53,20 @@ export class Response {
     if (this.fetchResponse.body === null) {
       return null;
     }
-    if (this._body instanceof ArrayBuffer) {
-      // the underlying stream was already consumed, serve a stream from the cached body (once, like fetch)
+    if (this._fetchBodyStream && Readable.isDisturbed(this._fetchBodyStream as any)) {
+      // already being read, so it stays the body like fetch's
+      return this._fetchBodyStream;
+    }
+    if (this._body !== null) {
+      // the underlying stream is consumed, serve a stream of the cached body (once, like fetch)
       if (!this._bodyStream) {
-        this._bodyStream = new FetchResponse(this._body).body;
+        this._bodyStream = cachedBodyStream(this._body) as FetchResponse['body'];
       }
       return this._bodyStream;
     }
     if (!this._fetchBodyStream) {
-      this._fetchBodyStream = observeBodyStream(this.fetchResponse.body, this._stopTimeout) as FetchResponse['body'];
+      // looked up on the first read since `clone()` replaces the fetch response's stream
+      this._fetchBodyStream = observeBodyStream(() => this.fetchResponse.body!, this._stopTimeout) as FetchResponse['body'];
     }
     return this._fetchBodyStream;
   }
@@ -60,7 +74,7 @@ export class Response {
   get bodyUsed(): boolean {
     if (this._body !== null) {
       // a clone shares the cached body, so only count reads made through this response
-      return this._bodyUsed;
+      return this._bodyUsed || (this._bodyStream !== null && Readable.isDisturbed(this._bodyStream as any));
     }
     return this.fetchResponse.bodyUsed;
   }
@@ -74,7 +88,7 @@ export class Response {
   }
 
   get redirected(): boolean {
-    return this.fetchResponse.redirected;
+    return this._redirected || this.fetchResponse.redirected;
   }
 
   get size(): number {
@@ -101,8 +115,7 @@ export class Response {
   }
 
   /**
-   * The body is read once and cached so it can be read again (and by clones), the returned ArrayBuffer is that cache
-   * It's shared with `buffer()`, `text()`, `json()` and clones of this response, so don't mutate it, copy it first
+   * The body is read once and cached, the returned ArrayBuffer is shared with clones so copy it before mutating
    */
   async arrayBuffer(): Promise<ArrayBuffer> {
     this._bodyUsed = true;
@@ -110,12 +123,10 @@ export class Response {
       return this._body;
     }
     this._body = this.fetchResponse.arrayBuffer();
-    try {
-      return this._body = await this._body;
-    } finally {
-      // the body is read (or failed to), the timeout is done either way
-      this._stopTimeout();
-    }
+    const body = await this._body;
+    // only a completed read stops the timeout, a clone's read may still need it
+    this._stopTimeout();
+    return this._body = body;
   }
 
   /**
@@ -140,17 +151,17 @@ export class Response {
   }
 
   clone(): Response {
-    // once the body is read (or being read) the fetch response can't be cloned, reuse the cached body instead
+    // a read fetch response can't be cloned, reuse the cached body instead
     const fetchResponse = (this._body === null) ? this.fetchResponse.clone() : this.fetchResponse;
     const response = new Response(this.request, fetchResponse, this.took, this._stopTimeout);
-    // the cached body is shared, not copied (see `arrayBuffer()`)
     if (this._body instanceof ArrayBuffer) {
       response._body = this._body;
     } else if (this._body) {
       const body = response._body = this._body.then((body) => response._body = body);
-      // the original's read failing would otherwise be an unhandled rejection if the clone is never read
+      // avoids an unhandled rejection if the clone is never read
       body.catch(() => {});
     }
+    response._redirected = this._redirected;
     response._size = this._size;
     return response;
   }
@@ -178,11 +189,11 @@ Object.defineProperties(Response.prototype, {
 
 
 /**
- * Wraps a body stream so the timeout stops once it's read to the end, errors or is cancelled
- * The stream is only locked on the first read, so `arrayBuffer()` can still be used after getting `body`
+ * Stops the timeout once the stream is read to the end, an error or cancel leaves it running for a clone
+ * The stream is locked on the first read, so `arrayBuffer()` and `clone()` still work after getting `body`
  */
 function observeBodyStream(
-  stream: ReadableStream<Uint8Array>,
+  getStream: () => ReadableStream<Uint8Array>,
   stop: () => void,
 ): ReadableStream<Uint8Array> {
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -190,7 +201,7 @@ function observeBodyStream(
     async pull(controller) {
       try {
         if (!reader) {
-          reader = stream.getReader();
+          reader = getStream().getReader();
         }
         const { done, value } = await reader.read();
         if (done) {
@@ -200,17 +211,33 @@ function observeBodyStream(
           controller.enqueue(value);
         }
       } catch (error) {
-        stop();
         controller.error(error);
       }
     },
     async cancel(reason) {
-      stop();
       if (reader) {
         await reader.cancel(reason);
       } else {
-        await stream.cancel(reason);
+        await getStream().cancel(reason);
       }
+    },
+  }, {highWaterMark: 0});
+}
+
+
+/**
+ * A stream of a copy of the cached body, since the cached body is shared
+ */
+function cachedBodyStream(
+  body: Promise<ArrayBuffer> | ArrayBuffer,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const bytes = new Uint8Array((await body).slice(0));
+      if (bytes.byteLength) {
+        controller.enqueue(bytes);
+      }
+      controller.close();
     },
   }, {highWaterMark: 0});
 }

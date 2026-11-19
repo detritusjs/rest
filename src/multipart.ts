@@ -4,8 +4,7 @@ import { ReadableStream } from 'stream/web';
 import { isArrayBuffer, isArrayBufferView, isBlob, isStream } from './is';
 
 
-// how much of a file is read or sent at a time, a blob's reads go through libuv's threadpool (4 threads by default, shared
-// with fs and dns) so bigger chunks mean fewer jobs on it, 256 KiB is ~480 reads a second at 1 Gbps
+// a blob's reads go through libuv's small shared threadpool, so bigger chunks mean fewer jobs on it
 export const MULTIPART_CHUNK_SIZE = 256 * 1024;
 
 const CRLF = Buffer.from('\r\n');
@@ -24,11 +23,8 @@ export interface MultipartPart {
 
 
 /**
- * A multipart/form-data body that's encoded on every send, its files are never copied
- * Buffers are sent as views into them and blobs (like `fs.openAsBlob()`) are read a chunk at a time as the socket drains,
- * undici's `FormData` copies a buffer into a `File`, a blob's stream gives an in-memory blob as one copied chunk and its
- * extracted stream copies every chunk again
- * Encodes the same bytes as undici's `FormData` (escaping, linefeeds, trailing CRLF), only the boundary differs
+ * A multipart/form-data body that's encoded on every send, its files are never copied (unlike undici's `FormData`)
+ * Encodes the same bytes as undici's `FormData`, only the boundary differs
  */
 export class MultipartBody {
   readonly boundary = `----formdata-detritus-${randomBytes(12).toString('hex')}`;
@@ -62,12 +58,11 @@ export class MultipartBody {
   }
 
   /**
-   * A file part, `value` can be a Buffer/TypedArray/ArrayBuffer (sent as is), a Blob or a stream (read in on the first send)
-   * Any other value is sent as its string's bytes, like a `File` made from it
+   * A file part, a stream `value` is read in on the first send and a non-binary one is sent as its string
    */
   appendFile(name: string, value: any, filename: string, contentType?: string): void {
     if (contentType && /[\r\n]/.test(contentType)) {
-      // it's written into the part's headers as is, a linefeed would inject headers
+      // a linefeed would inject headers into the part
       throw new Error('A file\'s content type cannot contain a carriage return or linefeed.');
     }
 
@@ -79,7 +74,6 @@ export class MultipartBody {
     let fileValue: MultipartFileValue;
     if (isBlob(value)) {
       fileValue = value;
-      // like `append()`, a blob's own type is used if none is given
       contentType = contentType || value.type || undefined;
     } else if (isArrayBuffer(value)) {
       fileValue = new Uint8Array(value);
@@ -92,12 +86,13 @@ export class MultipartBody {
   }
 
   /**
-   * Reads the pending streams into chunks, once (the body is shared with clones and concurrent sends)
-   * The chunks are held so the body can be sent again, pass a blob to stream a file from disk instead
+   * Reads the pending streams into chunks once, they're held so the body can be sent again
+   * A failed read stays failed, its stream is partly read
    */
   resolveStreams(): Promise<void> {
-    if (!this._resolvingStreams) {
-      this._resolvingStreams = (async () => {
+    if (!this._resolvingStreams || this.hasPendingStreams) {
+      const previous = this._resolvingStreams || Promise.resolve();
+      this._resolvingStreams = previous.then(async () => {
         for (let part of this.parts) {
           if (part.stream) {
             const stream = part.stream;
@@ -105,7 +100,7 @@ export class MultipartBody {
             delete part.stream;
           }
         }
-      })();
+      });
     }
     return this._resolvingStreams;
   }
@@ -164,7 +159,7 @@ export class MultipartBody {
 async function * iterateEncoded(encoded: Array<Uint8Array | Blob | Array<Uint8Array>>): AsyncGenerator<Uint8Array> {
   for (let value of encoded) {
     if (isBlob(value)) {
-      // a slice at a time, an in-memory blob's `stream()` would give the whole blob as one copied chunk
+      // an in-memory blob's `stream()` would give the whole blob as one copied chunk
       const blob = value as Blob;
       for (let start = 0; start < blob.size; start += MULTIPART_CHUNK_SIZE) {
         const end = Math.min(start + MULTIPART_CHUNK_SIZE, blob.size);
@@ -182,7 +177,6 @@ async function * iterateEncoded(encoded: Array<Uint8Array | Blob | Array<Uint8Ar
 
 
 function * iterateBytes(bytes: Uint8Array): Generator<Uint8Array> {
-  // views into the caller's buffer, nothing is copied
   for (let start = 0; start < bytes.byteLength; start += MULTIPART_CHUNK_SIZE) {
     yield bytes.subarray(start, start + MULTIPART_CHUNK_SIZE);
   }
